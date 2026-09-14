@@ -921,6 +921,15 @@ export default function App() {
     handlePrintAllBills(selectedBills)
   }
 
+  const handleDownloadSelectedBills = () => {
+    const selectedBills = sales.filter(sale => selectedSaleIds.includes(sale.id))
+    if (selectedBills.length === 0) {
+      alert('Please tick at least one bill to download.')
+      return
+    }
+    handlePrintAllBills(selectedBills)
+  }
+
   // --- OPEN PDF INVOICE AND WHATSAPP SIMULTANEOUSLY ---
   const handleSendWhatsAppBill = (saleRecord) => {
     // 1. Open the print/PDF window
@@ -1679,11 +1688,11 @@ export default function App() {
               </button>
               <button
                 type="button"
-                onClick={() => handlePrintAllBills(sales)}
-                disabled={sales.length === 0}
-                style={{ backgroundColor: sales.length === 0 ? '#cbd5e1' : '#2563eb', color: '#fff', border: 'none', borderRadius: '6px', padding: '8px 12px', cursor: sales.length === 0 ? 'not-allowed' : 'pointer', fontWeight: '700', fontSize: '12px' }}
+                onClick={handleDownloadSelectedBills}
+                disabled={selectedSaleIds.length === 0}
+                style={{ backgroundColor: selectedSaleIds.length === 0 ? '#cbd5e1' : '#2563eb', color: '#fff', border: 'none', borderRadius: '6px', padding: '8px 12px', cursor: selectedSaleIds.length === 0 ? 'not-allowed' : 'pointer', fontWeight: '700', fontSize: '12px' }}
               >
-                Download All Bills ({sales.length})
+                Download Selected Bills ({selectedSaleIds.length})
               </button>
               <button
                 type="button"
