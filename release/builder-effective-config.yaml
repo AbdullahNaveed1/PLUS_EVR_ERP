@@ -10,4 +10,9 @@ files:
       - package.json
 win:
   target: nsis
+nsis:
+  shortcutName: PLUS EVR ERP
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  perMachine: false
 electronVersion: 44.3.0
