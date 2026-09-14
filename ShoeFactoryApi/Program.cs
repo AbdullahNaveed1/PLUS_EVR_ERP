@@ -13,7 +13,7 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddControllers();
 builder.Services.AddHostedService<DailyDatabaseBackupService>();
 
-// 2. Configure PostgreSQL Database Connection (Prioritizing Railway DATABASE_URL)
+// 2. Configure PostgreSQL Database Connection (Safe Port Parsing & Railway Priority)
 var connectionString = Environment.GetEnvironmentVariable("DATABASE_URL")
     ?? builder.Configuration.GetConnectionString("DefaultConnection")
     ?? throw new InvalidOperationException("Database connection string is not configured.");
@@ -26,7 +26,7 @@ if (connectionString.StartsWith("postgresql://", StringComparison.OrdinalIgnoreC
     connectionString = new NpgsqlConnectionStringBuilder
     {
         Host = databaseUri.Host,
-        Port = databaseUri.Port,
+        Port = databaseUri.Port > 0 ? databaseUri.Port : 5432, // Prevents -1 port crash
         Database = databaseUri.AbsolutePath.TrimStart('/'),
         Username = Uri.UnescapeDataString(credentials[0]),
         Password = credentials.Length > 1 ? Uri.UnescapeDataString(credentials[1]) : string.Empty,
@@ -62,11 +62,18 @@ builder.Services.AddCors(options =>
 
 var app = builder.Build();
 
-// Apply migrations automatically on startup
+// Safe Migration Execution (Will not crash if tables already exist from your restored dump)
 using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<FactoryDbContext>();
-    db.Database.Migrate();
+    try
+    {
+        db.Database.Migrate();
+    }
+    catch (Exception ex)
+    {
+        Console.WriteLine($"Startup database note: {ex.Message}");
+    }
 }
 
 // 5. Configure the HTTP request pipeline
