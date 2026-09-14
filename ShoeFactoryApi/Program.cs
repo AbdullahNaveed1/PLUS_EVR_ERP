@@ -13,9 +13,10 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddControllers();
 builder.Services.AddHostedService<DailyDatabaseBackupService>();
 
-// 2. Configure PostgreSQL Database Connection using FactoryDbContext
-var connectionString = builder.Configuration.GetConnectionString("DefaultConnection")
-    ?? throw new InvalidOperationException("DefaultConnection is not configured.");
+// 2. Configure PostgreSQL Database Connection (Prioritizing Railway DATABASE_URL)
+var connectionString = Environment.GetEnvironmentVariable("DATABASE_URL")
+    ?? builder.Configuration.GetConnectionString("DefaultConnection")
+    ?? throw new InvalidOperationException("Database connection string is not configured.");
 
 if (connectionString.StartsWith("postgresql://", StringComparison.OrdinalIgnoreCase) ||
     connectionString.StartsWith("postgres://", StringComparison.OrdinalIgnoreCase))
@@ -61,6 +62,7 @@ builder.Services.AddCors(options =>
 
 var app = builder.Build();
 
+// Apply migrations automatically on startup
 using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<FactoryDbContext>();
@@ -98,7 +100,7 @@ app.MapGet("/api/create-admin", async (FactoryDbContext db) =>
     db.Users.Add(adminUser);
     await db.SaveChangesAsync();
 
-    return Results.Ok("Admin user created successfully! Username: admin | Password: AdminPassword123!");
+    return Results.Ok("Admin user created successfully! Username: admin | Password: 12345678");
 });
 
 // Fallback route for React SPA single-page routing
