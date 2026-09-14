@@ -1,0 +1,13 @@
+directories:
+  output: release
+  buildResources: build
+appId: com.plusevr.shoefactory
+productName: PLUS EVR ERP
+files:
+  - filter:
+      - electron/**/*
+      - ShoeFactoryApi/wwwroot/**/*
+      - package.json
+win:
+  target: nsis
+electronVersion: 44.3.0

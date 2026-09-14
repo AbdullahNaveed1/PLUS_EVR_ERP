@@ -1,0 +1,9 @@
+@import "tailwindcss";
+/* Override Vite boilerplate centering so the app spans full screen */
+body, html, #root {
+  width: 100%;
+  min-height: 100vh;
+  margin: 0;
+  padding: 0;
+  max-width: none !important;
+}
