@@ -48,6 +48,12 @@
     },
     "win": {
       "target": "nsis"
+    },
+    "nsis": {
+      "shortcutName": "PLUS EVR ERP",
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "perMachine": false
     }
   }
 }

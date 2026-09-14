@@ -679,14 +679,19 @@ export default function App() {
     }
   }
 
-  const handleDeleteExistingBills = async () => {
-    if (sales.length === 0) return
-    const confirmed = window.confirm(`Delete all ${sales.length} existing bills? This cannot be undone.`)
+  const handleDeleteSelectedBills = async () => {
+    const selectedBills = sales.filter(sale => selectedSaleIds.includes(sale.id))
+    if (selectedBills.length === 0) {
+      alert('Please tick at least one bill to delete.')
+      return
+    }
+
+    const confirmed = window.confirm(`Delete ${selectedBills.length} selected bill${selectedBills.length === 1 ? '' : 's'}? This cannot be undone.`)
     if (!confirmed) return
 
     try {
-      await Promise.all(sales.map(sale => axios.delete(`${API_BASE_URL}/api/sales/${sale.id}`, { headers: { Authorization: `Bearer ${token}` } })))
-      setSales([])
+      await Promise.all(selectedBills.map(sale => axios.delete(`${API_BASE_URL}/api/sales/${sale.id}`, { headers: { Authorization: `Bearer ${token}` } })))
+      setSales(currentSales => currentSales.filter(sale => !selectedSaleIds.includes(sale.id)))
       setSelectedSaleIds([])
     } catch (err) {
       console.error('Error deleting bills:', err)
@@ -1666,11 +1671,11 @@ export default function App() {
               <h2 style={{ margin: 0, fontSize: '18px', fontWeight: '700', color: '#1e293b' }}>Wholesale Multi-Item Billing & Invoicing</h2>
               <button
                 type="button"
-                onClick={handleDeleteExistingBills}
-                disabled={sales.length === 0}
-                style={{ backgroundColor: sales.length === 0 ? '#cbd5e1' : '#dc2626', color: '#fff', border: 'none', borderRadius: '6px', padding: '8px 12px', cursor: sales.length === 0 ? 'not-allowed' : 'pointer', fontWeight: '700', fontSize: '12px' }}
+                onClick={handleDeleteSelectedBills}
+                disabled={selectedSaleIds.length === 0}
+                style={{ backgroundColor: selectedSaleIds.length === 0 ? '#cbd5e1' : '#dc2626', color: '#fff', border: 'none', borderRadius: '6px', padding: '8px 12px', cursor: selectedSaleIds.length === 0 ? 'not-allowed' : 'pointer', fontWeight: '700', fontSize: '12px' }}
               >
-                Delete Existing Bills ({sales.length})
+                Delete Selected Bills ({selectedSaleIds.length})
               </button>
               <button
                 type="button"
