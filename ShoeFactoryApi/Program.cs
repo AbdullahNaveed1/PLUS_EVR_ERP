@@ -62,13 +62,13 @@ builder.Services.AddCors(options =>
 
 var app = builder.Build();
 
-// Safe Migration Execution (Will not crash if tables already exist from your restored dump)
+// Safe Schema Provisioning (Compatible with restored raw dumps)
 using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<FactoryDbContext>();
     try
     {
-        db.Database.Migrate();
+        db.Database.EnsureCreated();
     }
     catch (Exception ex)
     {
