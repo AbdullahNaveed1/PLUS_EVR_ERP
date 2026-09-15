@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using System.Text;
+using System.Text.Json;
 using Npgsql;
 using ShoeFactoryApi.Data;
 using ShoeFactoryApi.Models;
@@ -26,7 +27,7 @@ if (connectionString.StartsWith("postgresql://", StringComparison.OrdinalIgnoreC
     connectionString = new NpgsqlConnectionStringBuilder
     {
         Host = databaseUri.Host,
-        Port = databaseUri.Port > 0 ? databaseUri.Port : 5432, // Prevents -1 port crash
+        Port = databaseUri.Port > 0 ? databaseUri.Port : 5432,
         Database = databaseUri.AbsolutePath.TrimStart('/'),
         Username = Uri.UnescapeDataString(credentials[0]),
         Password = credentials.Length > 1 ? Uri.UnescapeDataString(credentials[1]) : string.Empty,
@@ -108,6 +109,25 @@ app.MapGet("/api/create-admin", async (FactoryDbContext db) =>
     await db.SaveChangesAsync();
 
     return Results.Ok("Admin user created successfully! Username: admin | Password: 12345678");
+});
+
+// JSON Export Endpoint for Trial-Tier Backup Portability
+app.MapGet("/api/backup/download", async (FactoryDbContext db) =>
+{
+    var snapshot = new
+    {
+        ExportedAt = DateTime.UtcNow,
+        Products = await db.Products.AsNoTracking().ToListAsync(),
+        Customers = await db.Customers.AsNoTracking().ToListAsync(),
+        Sales = await db.Sales.AsNoTracking().ToListAsync(),
+        Expenses = await db.Expenses.AsNoTracking().ToListAsync(),
+        Payments = await db.Payments.AsNoTracking().ToListAsync()
+    };
+
+    var json = JsonSerializer.Serialize(snapshot, new JsonSerializerOptions { WriteIndented = true });
+    var bytes = Encoding.UTF8.GetBytes(json);
+    
+    return Results.File(bytes, "application/json", $"plus-evr-erp-backup-{DateTime.UtcNow:yyyy-MM-dd}.json");
 });
 
 // Fallback route for React SPA single-page routing
