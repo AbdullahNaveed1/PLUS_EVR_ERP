@@ -63,18 +63,11 @@ builder.Services.AddCors(options =>
 
 var app = builder.Build();
 
-// Safe Schema Provisioning (Compatible with restored raw dumps)
+// Automatically apply EF Core migrations on startup so tables are correctly provisioned on Railway
 using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<FactoryDbContext>();
-    try
-    {
-        db.Database.EnsureCreated();
-    }
-    catch (Exception ex)
-    {
-        Console.WriteLine($"Startup database note: {ex.Message}");
-    }
+    db.Database.Migrate();
 }
 
 // 5. Configure the HTTP request pipeline
@@ -111,7 +104,7 @@ app.MapGet("/api/create-admin", async (FactoryDbContext db) =>
     return Results.Ok("Admin user created successfully! Username: admin | Password: 12345678");
 });
 
-// JSON Export Endpoint for Trial-Tier Backup Portability
+// JSON Export Endpoint for Backup Portability
 app.MapGet("/api/backup/download", async (FactoryDbContext db) =>
 {
     var snapshot = new
