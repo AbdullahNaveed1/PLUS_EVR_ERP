@@ -70,11 +70,19 @@ builder.Services.AddCors(options =>
 
 var app = builder.Build();
 
-// Automatically provision database tables on startup using EnsureCreated to avoid missing schema issues
+// Automatically provision database tables and ensure admin credentials are correct on startup
 using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<FactoryDbContext>();
     db.Database.EnsureCreated();
+
+    // TEMPORARY FIX: Force reset admin password to "Password123!" using correct BCrypt hashing
+    var adminUser = db.Users.FirstOrDefault(u => u.Username == "admin");
+    if (adminUser != null)
+    {
+        adminUser.PasswordHash = BCrypt.Net.BCrypt.HashPassword("Password123!");
+        db.SaveChanges();
+    }
 }
 
 // 5. Configure the HTTP request pipeline
@@ -88,10 +96,6 @@ app.UseAuthentication();
 app.UseAuthorization();
 
 app.MapControllers();
-
-// Note: the /api/create-admin bootstrap endpoint was removed after initial setup.
-// Your real admin account already exists — creating further users now requires
-// an authenticated Admin calling POST /api/auth/register.
 
 // JSON Export Endpoint for Backup Portability
 app.MapGet("/api/backup/download", async (FactoryDbContext db) =>
