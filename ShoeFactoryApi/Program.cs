@@ -11,7 +11,13 @@ using ShoeFactoryApi.Services;
 var builder = WebApplication.CreateBuilder(args);
 
 // 1. Add services to the container
-builder.Services.AddControllers();
+builder.Services.AddControllers()
+    .AddJsonOptions(options =>
+    {
+        // Safety net: if any model ever has a circular navigation property
+        // (like Worker <-> WagePayment), don't let it crash serialization with a 500.
+        options.JsonSerializerOptions.ReferenceHandler = System.Text.Json.Serialization.ReferenceHandler.IgnoreCycles;
+    });
 builder.Services.AddHostedService<DailyDatabaseBackupService>();
 
 // 2. Configure PostgreSQL Database Connection (Safe Port Parsing & Railway Priority)
