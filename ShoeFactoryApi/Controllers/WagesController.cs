@@ -48,6 +48,28 @@ namespace ShoeFactoryApi.Controllers
             return NoContent();
         }
 
+        // DELETE: api/wages/workers/{id}
+        [Authorize(Roles = "Admin")]
+        [HttpDelete("workers/{id}")]
+        public async Task<IActionResult> DeleteWorker(int id)
+        {
+            var worker = await _context.Workers
+                .Include(w => w.WagePayments)
+                .FirstOrDefaultAsync(w => w.Id == id);
+
+            if (worker == null) return NotFound(new { message = "Worker not found." });
+
+            // Remove associated wage payments first to prevent foreign key constraint exceptions
+            if (worker.WagePayments != null && worker.WagePayments.Any())
+            {
+                _context.WagePayments.RemoveRange(worker.WagePayments);
+            }
+
+            _context.Workers.Remove(worker);
+            await _context.SaveChangesAsync();
+            return NoContent();
+        }
+
         [HttpGet("payments")]
         public async Task<ActionResult<IEnumerable<WagePayment>>> GetPayments()
         {
@@ -76,6 +98,8 @@ namespace ShoeFactoryApi.Controllers
             return CreatedAtAction(nameof(GetPayments), new { id = payment.Id }, payment);
         }
 
+        // DELETE: api/wages/payments/{id}
+        [Authorize(Roles = "Admin")]
         [HttpDelete("payments/{id}")]
         public async Task<IActionResult> DeletePayment(int id)
         {
