@@ -63,11 +63,11 @@ builder.Services.AddCors(options =>
 
 var app = builder.Build();
 
-// Automatically apply EF Core migrations on startup so tables are correctly provisioned on Railway
+// Automatically provision database tables on startup
 using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<FactoryDbContext>();
-    db.Database.Migrate();
+    db.Database.EnsureCreated();
 }
 
 // 5. Configure the HTTP request pipeline
