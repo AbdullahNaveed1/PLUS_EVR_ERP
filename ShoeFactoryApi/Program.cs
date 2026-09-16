@@ -46,7 +46,8 @@ builder.Services.AddDbContext<FactoryDbContext>(options =>
     options.UseNpgsql(connectionString));
 
 // 3. Configure JWT Authentication
-var jwtKey = builder.Configuration["Jwt:Key"] ?? "PlusEvrErpSuperSecretKey1234567890%!@#";
+var jwtKey = builder.Configuration["Jwt:Key"]
+    ?? throw new InvalidOperationException("JWT signing key is not configured. Set the Jwt__Key environment variable in Railway.");
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(options =>
     {
@@ -88,27 +89,9 @@ app.UseAuthorization();
 
 app.MapControllers();
 
-// Endpoint to seed an admin user
-app.MapGet("/api/create-admin", async (FactoryDbContext db) =>
-{
-    var existingAdmin = await db.Users.FirstOrDefaultAsync(u => u.Username == "admin");
-    if (existingAdmin != null)
-    {
-        return Results.Ok("Admin user already exists!");
-    }
-
-    var adminUser = new User
-    {
-        Username = "admin",
-        PasswordHash = BCrypt.Net.BCrypt.HashPassword("12345678"),
-        Role = "Admin"
-    };
-
-    db.Users.Add(adminUser);
-    await db.SaveChangesAsync();
-
-    return Results.Ok("Admin user created successfully! Username: admin | Password: 12345678");
-});
+// Note: the /api/create-admin bootstrap endpoint was removed after initial setup.
+// Your real admin account already exists — creating further users now requires
+// an authenticated Admin calling POST /api/auth/register.
 
 // JSON Export Endpoint for Backup Portability
 app.MapGet("/api/backup/download", async (FactoryDbContext db) =>
