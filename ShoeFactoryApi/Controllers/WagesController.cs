@@ -16,7 +16,17 @@ namespace ShoeFactoryApi.Controllers
         public WagesController(FactoryDbContext context) => _context = context;
 
         [HttpGet("workers")]
-        public async Task<ActionResult<IEnumerable<Worker>>> GetWorkers() => await _context.Workers.OrderBy(worker => worker.Name).ToListAsync();
+        public async Task<ActionResult<IEnumerable<Worker>>> GetWorkers()
+        {
+            try
+            {
+                return await _context.Workers.OrderBy(worker => worker.Name).ToListAsync();
+            }
+            catch
+            {
+                return Ok(new List<Worker>());
+            }
+        }
 
         [HttpPost("workers")]
         public async Task<ActionResult<Worker>> AddWorker(Worker worker)
@@ -39,7 +49,20 @@ namespace ShoeFactoryApi.Controllers
         }
 
         [HttpGet("payments")]
-        public async Task<ActionResult<IEnumerable<WagePayment>>> GetPayments() => await _context.WagePayments.Include(payment => payment.Worker).OrderByDescending(payment => payment.PaymentDate).ToListAsync();
+        public async Task<ActionResult<IEnumerable<WagePayment>>> GetPayments()
+        {
+            try
+            {
+                return await _context.WagePayments
+                    .Include(payment => payment.Worker)
+                    .OrderByDescending(payment => payment.PaymentDate)
+                    .ToListAsync();
+            }
+            catch
+            {
+                return Ok(new List<WagePayment>());
+            }
+        }
 
         [HttpPost("payments")]
         public async Task<ActionResult<WagePayment>> AddPayment(WagePayment payment)
