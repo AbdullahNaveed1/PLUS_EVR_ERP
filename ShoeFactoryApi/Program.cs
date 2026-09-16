@@ -63,7 +63,7 @@ builder.Services.AddCors(options =>
 
 var app = builder.Build();
 
-// Automatically provision database tables on startup
+// Automatically provision database tables on startup using EnsureCreated to avoid missing schema issues
 using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<FactoryDbContext>();
