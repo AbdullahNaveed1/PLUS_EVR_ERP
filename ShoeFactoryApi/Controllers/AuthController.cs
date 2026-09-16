@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
@@ -23,6 +24,7 @@ namespace ShoeFactoryApi.Controllers
             _configuration = configuration;
         }
 
+        [Authorize(Roles = "Admin")]
         [HttpPost("register")]
         public async Task<IActionResult> Register(RegisterDto request)
         {
@@ -74,8 +76,9 @@ namespace ShoeFactoryApi.Controllers
 
         private string GenerateJwtToken(User user)
         {
-            // MUST MATCH Program.cs EXACTLY
-            var secretKey = _configuration["Jwt:Key"] ?? "PlusEvrErpSuperSecretKey1234567890%!@#";
+            // MUST MATCH Program.cs EXACTLY — comes from the Jwt__Key environment variable, never hardcoded
+            var secretKey = _configuration["Jwt:Key"]
+                ?? throw new InvalidOperationException("JWT signing key is not configured.");
             var key = Encoding.UTF8.GetBytes(secretKey);
 
             var claims = new List<Claim>
