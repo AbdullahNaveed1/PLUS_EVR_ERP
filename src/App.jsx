@@ -142,9 +142,7 @@ export default function App() {
   const [workers, setWorkers] = useState([])
   const [wagePayments, setWagePayments] = useState([])
 
-  // --- VIEW BILL MODAL STATE ---
-  const [viewingBill, setViewingBill] = useState(null)
-
+  // Legacy browser records are retained only long enough to migrate them to the API.
   const [sales, setSales] = useState(() => {
     try {
       const saved = localStorage.getItem('factory_sales')
@@ -162,6 +160,7 @@ export default function App() {
     }
   })
 
+  // Legacy browser payments are migrated to the API on the first authenticated load.
   const [payments, setPayments] = useState(() => {
     try {
       const saved = localStorage.getItem('factory_payments')
@@ -195,6 +194,7 @@ export default function App() {
   const [transportCompany, setTransportCompany] = useState('')
   const [builtyNo, setBuiltyNo] = useState('')
   
+  // Cart items use the product's original bill rate. Discounts are applied later.
   const [cartItems, setCartItems] = useState([
     { productId: '', model: '', size: '', qty: '', unitType: 'dozens', price: '' }
   ])
@@ -213,10 +213,12 @@ export default function App() {
     new Date().toISOString().split('T')[0]
   );
 
+  // Helper to generate a random unique customer ID string
   const generateCustomerId = () => {
     return 'CUST-' + Math.floor(1000 + Math.random() * 9000);
   }
 
+  // Fetch all live data on mount (if authenticated)
   useEffect(() => {
     if (token) {
       fetchAllData()
@@ -303,6 +305,7 @@ export default function App() {
     setUsername(null)
   }
 
+  // --- IF NOT LOGGED IN, SHOW LOGIN SCREEN ---
   if (!token) {
     return (
       <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh', backgroundColor: '#f8fafc', fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif' }}>
@@ -354,6 +357,7 @@ export default function App() {
     return groups
   }, {})
 
+  // --- CALCULATE TOTAL MARKET DUES (OUTSTANDING RECEIVABLES) ---
   const totalMarketDues = customers.reduce((acc, c) => {
     const customerBills = sales.filter(s => s.customerId === c.phone);
     const customerPayments = payments.filter(p => p.customerId === c.phone || p.customer === c.name);
@@ -849,6 +853,142 @@ export default function App() {
       </html>
     `)
     printWindow.document.close()
+  }
+
+  const handleViewPdfBill = (saleRecord) => {
+    const printWindow = window.open('', '_blank', 'width=900,height=700')
+    const invoiceNumber = getInvoiceNumber(saleRecord)
+    const billItems = saleRecord.lineItems || []
+    const quantityTotals = billItems.reduce((totals, item) => {
+      const pairs = Number(item.pairs || 0) || (Number(item.qty || 0) * (item.unitType === 'pairs' ? 1 : 12))
+      const enteredQuantity = Number(item.qty)
+      const dozens = item.unitType === 'pairs'
+        ? pairs / 12
+        : (enteredQuantity > 0 ? enteredQuantity : pairs / 12)
+      return {
+        dozens: totals.dozens + (Number.isFinite(dozens) ? dozens : 0),
+        pairs: totals.pairs + (Number.isFinite(pairs) ? pairs : 0)
+      }
+    }, { dozens: 0, pairs: 0 })
+
+    const rowsHtml = saleRecord.lineItems && saleRecord.lineItems.length > 0 ? saleRecord.lineItems.map((item, idx) => {
+      const displayModel = item.model || item.description || 'Footwear Article';
+      const displaySize = item.size || 'N/A';
+      const pairCount = Number(item.pairs || 0);
+      const enteredQuantity = Number(item.qty);
+      const dozenQuantity = item.unitType === 'pairs'
+        ? pairCount / 12
+        : (enteredQuantity > 0 ? enteredQuantity : pairCount / 12);
+      const displayQty = dozenQuantity > 0
+        ? `${dozenQuantity.toLocaleString()} dozens (${pairCount.toLocaleString()} pairs)`
+        : '-';
+      const unitPriceNum = Number(item.price || item.netAmount || saleRecord.total || 0);
+      const lineTotal = Number(item.grossAmount || item.netAmount || saleRecord.total || 0);
+
+      return `
+        <tr>
+          <td style="text-align: center; width: 30px;">${idx + 1}</td>
+          <td style="text-align: center; width: 60px;">#${item.productId || 'N/A'}</td>
+          <td>${displayModel} (Size: ${displaySize})</td>
+          <td style="text-align: center; width: 110px;">${displayQty}</td>
+          <td style="text-align: right; width: 85px;">Rs. ${unitPriceNum.toLocaleString()}</td>
+          <td style="text-align: right; width: 110px; font-weight: bold;">Rs. ${lineTotal.toLocaleString()}</td>
+        </tr>
+      `;
+    }).join('') : `
+      <tr>
+        <td style="text-align: center;">1</td>
+        <td style="text-align: center;">#N/A</td>
+        <td>${saleRecord.items || 'General Wholesale Order'}</td>
+        <td style="text-align: center;">-</td>
+        <td style="text-align: right;">-</td>
+        <td style="text-align: right; font-weight: bold;">Rs. ${(saleRecord.rawTotal || saleRecord.total).toLocaleString()}</td>
+      </tr>
+    `;
+
+    printWindow.document.write(`
+      <html>
+        <head>
+          <title>Invoice ${invoiceNumber}</title>
+          <style>
+            body { font-family: 'Helvetica Neue', Arial, sans-serif; padding: 20px; color: #1e293b; background: #fff; margin: 0; font-size: 11px; }
+            .invoice-header { display: flex; justify-content: space-between; border-bottom: 2px solid #714B67; padding-bottom: 12px; margin-bottom: 15px; }
+            .company-name { font-size: 18px; font-weight: 800; text-transform: uppercase; color: #714B67; margin: 0; }
+            .company-sub { font-size: 10px; color: #64748b; }
+            .invoice-details { text-align: right; font-size: 11px; line-height: 1.25; }
+            .meta-grid { display: flex; justify-content: space-between; background: #f8fafc; border: 1px solid #e2e8f0; padding: 7px 9px; border-radius: 4px; margin-bottom: 9px; font-size: 11px; }
+            table { width: 100%; border-collapse: collapse; margin-bottom: 9px; }
+            th, td { border: 1px solid #cbd5e1; padding: 6px; font-size: 10px; line-height: 1.15; }
+            th { background-color: #f1f5f9; color: #334155; font-weight: 700; text-transform: uppercase; font-size: 11px; }
+            .total-section { width: 250px; margin-left: auto; background: #f8fafc; border: 1px solid #e2e8f0; padding: 7px 9px; border-radius: 4px; font-size: 11px; }
+            .total-row { display: flex; justify-content: space-between; margin-bottom: 3px; }
+            .net-amount { font-size: 13px; font-weight: 800; color: #16a34a; border-top: 1px solid #cbd5e1; padding-top: 4px; margin-top: 4px; }
+            .signature-section { margin-top: 18px; display: flex; justify-content: space-between; font-size: 10px; color: #475569; }
+            .sig-line { width: 160px; border-top: 1px solid #94a3b8; text-align: center; padding-top: 4px; }
+            .footer { margin-top: 10px; text-align: center; font-size: 9px; color: #94a3b8; border-top: 1px solid #e2e8f0; padding-top: 4px; }
+            .print-btn { display: block; width: 100%; max-width: 200px; margin: 20px auto 0 auto; background: #714B67; color: white; border: none; padding: 10px; border-radius: 6px; font-weight: bold; cursor: pointer; text-align: center; }
+            @media print { .print-btn { display: none; } body { padding: 0; } @page { size: A4 portrait; margin: 7mm; } }
+          </style>
+        </head>
+        <body>
+          <div class="invoice-header">
+            <div>
+              <h1 class="company-name">PLUS EVR ERP Factory</h1>
+              <div class="company-sub">Wholesale Footwear Manufacturing & Ledger</div>
+              <div class="company-sub">Lahore, Pakistan</div>
+            </div>
+            <div class="invoice-details">
+              <h3 style="margin: 0 0 4px 0; color: #1e293b;">WHOLESALE INVOICE</h3>
+              <div><strong>Invoice No:</strong> ${invoiceNumber}</div>
+              <div><strong>Date:</strong> ${saleRecord.date}</div>
+              <div><strong>Region:</strong> ${saleRecord.region || 'Punjab'}</div>
+            </div>
+          </div>
+
+          <div class="meta-grid">
+            <div><strong>Customer:</strong> <strong>${saleRecord.customer}</strong> (${saleRecord.customerId || 'N/A'})</div>
+            <div><strong>Transport:</strong> ${saleRecord.transportCompany || 'N/A'} | <strong>Builty No:</strong> ${saleRecord.builtyNo || 'N/A'}</div>
+          </div>
+
+          <table>
+            <thead>
+              <tr>
+                <th style="text-align: center;">#</th>
+                <th style="text-align: center;">Item No.</th>
+                <th>Description / Article Details</th>
+                <th style="text-align: center;">Quantity (Dozens)</th>
+                <th style="text-align: right;">Bill Rate/Pair</th>
+                <th style="text-align: right;">Bill Rate (PKR)</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${rowsHtml}
+            </tbody>
+            <tfoot>
+              <tr style="font-weight: 800; background-color: #f8fafc;">
+                <td colspan="3" style="text-align: right;">TOTAL QUANTITY:</td>
+                <td style="text-align: center;">${quantityTotals.dozens.toLocaleString()} dozens (${quantityTotals.pairs.toLocaleString()} pairs)</td>
+                <td colspan="3"></td>
+              </tr>
+            </tfoot>
+          </table>
+
+          <div class="total-section">
+            <div class="total-row"><span>Bill Rate Total:</span><span>Rs. ${(saleRecord.rawTotal || saleRecord.total).toLocaleString()}</span></div>
+            ${saleRecord.discount > 0 ? `<div class="total-row" style="color: #dc2626;"><span>Discount Applied Later:</span><span>- Rs. ${saleRecord.discount.toLocaleString()}</span></div><div class="total-row net-amount"><span>Net Payable:</span><span>Rs. ${saleRecord.total.toLocaleString()}</span></div>` : ''}
+          </div>
+
+          <div class="signature-section">
+            <div class="sig-line">Prepared By</div>
+            <div class="sig-line">Receiver Signature</div>
+            <div class="sig-line">Authorized Stamp</div>
+          </div>
+
+          <button class="print-btn" onclick="window.print()">Print / Save PDF</button>
+        </body>
+      </html>
+    `);
+    printWindow.document.close();
   }
 
   const handlePrintAllBills = (billsToPrint = sales) => {
@@ -1665,7 +1805,7 @@ export default function App() {
           </div>
         )}
 
-        {/* MULTI-ITEM BILLING WITH VIEW BILL BUTTON */}
+        {/* MULTI-ITEM BILLING */}
         {activeTab === 'sales' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
@@ -1969,6 +2109,14 @@ export default function App() {
                         </td>
                         <td style={{ padding: '14px', textAlign: 'center' }}>
                           <div style={{ display: 'flex', gap: '6px', justifyContent: 'center', flexWrap: 'wrap' }}>
+                            {/* VIEW PDF BILL BUTTON PLACED AT THE FRONT */}
+                            <button 
+                              onClick={() => handleViewPdfBill(s)}
+                              style={{ backgroundColor: '#0f766e', color: '#fff', border: 'none', padding: '6px 10px', borderRadius: '6px', cursor: 'pointer', fontWeight: '600', fontSize: '12px' }}
+                            >
+                              📄 View PDF Bill
+                            </button>
+
                             {isEditing ? (
                               <button 
                                 onClick={() => handleUpdateSaleDetails(s.id)}
@@ -1977,27 +2125,19 @@ export default function App() {
                                 Save
                               </button>
                             ) : (
-                              <>
-                                <button 
-                                  onClick={() => setViewingBill(s)}
-                                  style={{ backgroundColor: '#475569', color: '#fff', border: 'none', padding: '6px 10px', borderRadius: '6px', cursor: 'pointer', fontWeight: '600', fontSize: '12px' }}
-                                >
-                                  View Bill
-                                </button>
-                                <button 
-                                  onClick={() => {
-                                    setEditingSaleId(s.id);
-                                    setEditSaleInputs({
-                                      transportCompany: s.transportCompany || '',
-                                      builtyNo: s.builtyNo || '',
-                                      discountPerPair: Object.fromEntries((s.lineItems || []).map((item, index) => [index, item.discountPerPair || 0]))
-                                    });
-                                  }}
-                                  style={{ backgroundColor: '#64748b', color: '#fff', border: 'none', padding: '6px 10px', borderRadius: '6px', cursor: 'pointer', fontWeight: '600', fontSize: '12px' }}
-                                >
-                                  Edit Bill Details
-                                </button>
-                              </>
+                              <button 
+                                onClick={() => {
+                                  setEditingSaleId(s.id);
+                                  setEditSaleInputs({
+                                    transportCompany: s.transportCompany || '',
+                                    builtyNo: s.builtyNo || '',
+                                    discountPerPair: Object.fromEntries((s.lineItems || []).map((item, index) => [index, item.discountPerPair || 0]))
+                                  });
+                                }}
+                                style={{ backgroundColor: '#64748b', color: '#fff', border: 'none', padding: '6px 10px', borderRadius: '6px', cursor: 'pointer', fontWeight: '600', fontSize: '12px' }}
+                              >
+                                Edit Bill Details
+                              </button>
                             )}
                             <button 
                               onClick={() => handlePrintBill(s)}
@@ -2184,83 +2324,6 @@ export default function App() {
           </div>
         )}
       </main>
-
-      {/* VIEW BILL MODAL POPUP */}
-      {viewingBill && (
-        <div style={{ position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 2000, padding: '20px', boxSizing: 'border-box' }}>
-          <div style={{ backgroundColor: '#fff', padding: '30px', borderRadius: '12px', width: '100%', maxWidth: '650px', maxHeight: '90vh', overflowY: 'auto', boxShadow: '0 10px 25px rgba(0,0,0,0.2)' }}>
-            
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '2px solid #714B67', paddingBottom: '15px', marginBottom: '20px' }}>
-              <div>
-                <h3 style={{ margin: '0 0 5px 0', color: '#714B67', fontSize: '18px', fontWeight: '800' }}>PLUS EVR ERP Factory</h3>
-                <span style={{ fontSize: '13px', color: '#64748b' }}>Wholesale Invoice #{getInvoiceNumber(viewingBill)}</span>
-              </div>
-              <button 
-                onClick={() => setViewingBill(null)}
-                style={{ backgroundColor: '#dc2626', color: '#fff', border: 'none', width: '32px', height: '32px', borderRadius: '50%', cursor: 'pointer', fontWeight: 'bold', fontSize: '14px' }}
-              >
-                ✕
-              </button>
-            </div>
-
-            <div style={{ fontSize: '14px', lineHeight: '1.6', marginBottom: '20px', color: '#334155', backgroundColor: '#f8fafc', padding: '15px', borderRadius: '8px', border: '1px solid #e2e8f0' }}>
-              <p style={{ margin: '3px 0' }}><strong>Date:</strong> {viewingBill.date}</p>
-              <p style={{ margin: '3px 0' }}><strong>Customer ID:</strong> {viewingBill.customerId || 'N/A'}</p>
-              <p style={{ margin: '3px 0' }}><strong>Customer Name:</strong> {viewingBill.customer}</p>
-              <p style={{ margin: '3px 0' }}><strong>Region:</strong> {viewingBill.region || 'Punjab'}</p>
-              <p style={{ margin: '3px 0' }}><strong>Transport:</strong> {viewingBill.transportCompany || 'N/A'} | <strong>Builty No:</strong> {viewingBill.builtyNo || 'N/A'}</p>
-            </div>
-
-            <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: '20px' }}>
-              <thead>
-                <tr style={{ backgroundColor: '#f1f5f9', color: '#475569', fontSize: '12px', textTransform: 'uppercase' }}>
-                  <th style={{ padding: '10px', border: '1px solid #cbd5e1', textAlign: 'left' }}>Description / Line Items</th>
-                  <th style={{ padding: '10px', border: '1px solid #cbd5e1', textAlign: 'right' }}>Gross Amount</th>
-                </tr>
-              </thead>
-              <tbody>
-                {viewingBill.lineItems ? viewingBill.lineItems.map((item, idx) => (
-                  <tr key={idx} style={{ fontSize: '13px' }}>
-                    <td style={{ padding: '10px', border: '1px solid #cbd5e1' }}>{item.description}</td>
-                    <td style={{ padding: '10px', border: '1px solid #cbd5e1', textAlign: 'right' }}>Rs. {numberOrZero(item.grossAmount || item.netAmount).toLocaleString()}</td>
-                  </tr>
-                )) : (
-                  <tr>
-                    <td style={{ padding: '10px', border: '1px solid #cbd5e1' }}>{viewingBill.items || 'General Wholesale Order'}</td>
-                    <td style={{ padding: '10px', border: '1px solid #cbd5e1', textAlign: 'right' }}>Rs. {(numberOrZero(viewingBill.rawTotal || viewingBill.total)).toLocaleString()}</td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-
-            <div style={{ textAlign: 'right', fontSize: '14px', lineHeight: '1.6', marginBottom: '25px', color: '#1e293b' }}>
-              <p style={{ margin: '4px 0' }}>Bill Rate Total: Rs. {(numberOrZero(viewingBill.rawTotal || viewingBill.total)).toLocaleString()}</p>
-              {numberOrZero(viewingBill.discount) > 0 && (
-                <p style={{ margin: '4px 0', color: '#dc2626' }}>Discount Applied: - Rs. {numberOrZero(viewingBill.discount).toLocaleString()}</p>
-              )}
-              <hr style={{ border: '0', borderTop: '1px solid #cbd5e1', margin: '8px 0 8px auto', width: '240px' }} />
-              <p style={{ fontSize: '17px', fontWeight: '800', color: '#16a34a', margin: '4px 0' }}>Net Payable: Rs. {numberOrZero(viewingBill.total).toLocaleString()}</p>
-            </div>
-
-            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', borderTop: '1px solid #e2e8f0', paddingTop: '15px' }}>
-              <button 
-                onClick={() => handlePrintBill(viewingBill)}
-                style={{ backgroundColor: '#2563eb', color: '#fff', border: 'none', padding: '10px 20px', borderRadius: '6px', fontWeight: '700', cursor: 'pointer', fontSize: '13px' }}
-              >
-                🖨️ Print / PDF
-              </button>
-              <button 
-                onClick={() => setViewingBill(null)}
-                style={{ backgroundColor: '#64748b', color: '#fff', border: 'none', padding: '10px 20px', borderRadius: '6px', fontWeight: '700', cursor: 'pointer', fontSize: '13px' }}
-              >
-                Close
-              </button>
-            </div>
-
-          </div>
-        </div>
-      )}
-
     </div>
   )
 }
