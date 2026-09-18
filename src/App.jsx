@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import axios from 'axios'
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || ''
@@ -123,6 +123,10 @@ const normalizeSale = sale => {
   return { ...sale, lineItems: normalizedItems, discount: saleDiscount || knownDiscount }
 }
 
+// Format helpers for consistent Dozens/Pairs display
+const formatDozens = pairs => (numberOrZero(pairs) / 12).toFixed(2)
+const formatPairs = pairs => numberOrZero(pairs).toLocaleString()
+
 export default function App() {
   const [token, setToken] = useState(() => localStorage.getItem('token'))
   const [role, setRole] = useState(() => localStorage.getItem('role'))
@@ -185,7 +189,7 @@ export default function App() {
   const [saleCustomerRegion, setSaleCustomerRegion] = useState('Punjab')
   const [transportCompany, setTransportCompany] = useState('')
   const [builtyNo, setBuiltyNo] = useState('')
-  
+
   const [cartItems, setCartItems] = useState([
     { productId: '', model: '', size: '', qty: '', unitType: 'dozens', price: '' }
   ])
@@ -194,11 +198,16 @@ export default function App() {
   const [editSaleInputs, setEditSaleInputs] = useState({ transportCompany: '', builtyNo: '', discountPerPair: {} })
   const [selectedSaleIds, setSelectedSaleIds] = useState([])
 
-  // Modal View Bill state
+  // === Feature 1: View Bill Modal State ===
   const [selectedBill, setSelectedBill] = useState(null)
   const handleViewBill = (sale) => {
     setSelectedBill(sale)
   }
+  const closeBillModal = () => setSelectedBill(null)
+
+  // === Feature 3: Stock Report Filters ===
+  const [stockReportSearch, setStockReportSearch] = useState('')
+  const [stockReportRegion, setStockReportRegion] = useState('Punjab')
 
   const [reportCustId, setReportCustId] = useState('');
   const [reportStartDate, setReportStartDate] = useState(
@@ -298,46 +307,23 @@ export default function App() {
     setUsername(null)
   }
 
-  if (!token) {
-    return (
-      <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh', backgroundColor: '#f8fafc', fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif' }}>
-        <form onSubmit={handleLogin} style={{ background: '#fff', padding: '40px', borderRadius: '12px', boxShadow: '0 4px 12px rgba(0,0,0,0.1)', width: '100%', maxWidth: '400px', border: '1px solid #e2e8f0' }}>
-          <div style={{ textAlign: 'center', marginBottom: '24px' }}>
-            <h2 style={{ margin: '10px 0 0 0', color: '#714B67', fontSize: '20px', fontWeight: '800' }}>PLUS EVR ERP</h2>
-            <p style={{ margin: '5px 0 0 0', fontSize: '13px', color: '#64748b' }}>Secure Admin Portal</p>
-          </div>
-
-          {loginError && <p style={{ color: '#dc2626', marginBottom: '15px', fontSize: '13px', textAlign: 'center', fontWeight: '600' }}>{loginError}</p>}
-
-          <div style={{ marginBottom: '15px' }}>
-            <label style={{ display: 'block', marginBottom: '6px', fontSize: '12px', fontWeight: '700', color: '#475569', textTransform: 'uppercase' }}>Username</label>
-            <input 
-              type="text"
-              value={loginForm.username}
-              onChange={(e) => setLoginForm({...loginForm, username: e.target.value})}
-              style={{ width: '100%', padding: '10px', borderRadius: '6px', border: '1px solid #cbd5e1', boxSizing: 'border-box', fontSize: '14px' }}
-              required 
-            />
-          </div>
-          <div style={{ marginBottom: '24px' }}>
-            <label style={{ display: 'block', marginBottom: '6px', fontSize: '12px', fontWeight: '700', color: '#475569', textTransform: 'uppercase' }}>Password</label>
-            <input 
-              type="password"
-              value={loginForm.password}
-              onChange={(e) => setLoginForm({...loginForm, password: e.target.value})}
-              style={{ width: '100%', padding: '10px', borderRadius: '6px', border: '1px solid #cbd5e1', boxSizing: 'border-box', fontSize: '14px' }}
-              required 
-            />
-          </div>
-          <button type="submit" style={{ width: '100%', backgroundColor: '#714B67', color: '#fff', padding: '12px', border: 'none', borderRadius: '6px', fontWeight: '700', cursor: 'pointer', fontSize: '14px' }}>
-            Sign In to ERP
-          </button>
-        </form>
-      </div>
+  // === Feature 2 & 3: Memoized aggregate totals for stock ===
+  const stockTotals = useMemo(() => {
+    const totalPairs = inventory.reduce((acc, item) => acc + numberOrZero(item.qty), 0)
+    const totalDozens = totalPairs / 12
+    const totalValuePunjab = inventory.reduce(
+      (acc, item) => acc + (numberOrZero(item.qty) * numberOrZero(item.pricePunjab ?? item.price)),
+      0
     )
-  }
+    const totalValueSindh = inventory.reduce(
+      (acc, item) => acc + (numberOrZero(item.qty) * numberOrZero(item.priceSindh ?? item.price)),
+      0
+    )
+    const uniqueArticles = new Set(inventory.map(i => i.articleNumber || i.model || 'Unassigned')).size
+    return { totalPairs, totalDozens, totalValuePunjab, totalValueSindh, uniqueArticles, variantCount: inventory.length }
+  }, [inventory])
 
-  const totalInventoryValue = inventory.reduce((acc, item) => acc + ((item.qty || 0) * (Number(item.pricePunjab ?? item.price ?? 0))), 0)
+  const totalInventoryValue = stockTotals.totalValuePunjab
   const totalExpenses = expenses.reduce((acc, ex) => acc + Number(ex.amount || 0), 0)
   const totalSalesRevenue = sales.reduce((acc, s) => acc + Number(s.total || 0), 0)
   const totalPaymentsReceived = payments.reduce((acc, p) => acc + Number(p.amount || 0), 0)
@@ -572,7 +558,7 @@ export default function App() {
       const selectedProd = inventory.find(p => p.id.toString() === row.productId?.toString());
       const modelName = row.model || selectedProd?.model || 'Article';
       const sizeVal = row.size || selectedProd?.size || 'N/A';
-      
+
       const multiplier = row.unitType === 'dozens' ? 12 : 1
       const itemPairs = Number(row.qty || 0) * multiplier
       const unitPrice = getProductPrice(selectedProd, saleCustomerRegion)
@@ -1074,76 +1060,118 @@ export default function App() {
       `_Your official PDF invoice print window has opened on our system._ 🙏`;
 
     const encodedMessage = encodeURIComponent(message);
-    const whatsappUrl = customerPhone 
+    const whatsappUrl = customerPhone
       ? `https://api.whatsapp.com/send?phone=${customerPhone}&text=${encodedMessage}`
       : `https://api.whatsapp.com/send?text=${encodedMessage}`;
 
     window.open(whatsappUrl, '_blank');
   };
 
+  // === Feature 3: Enhanced Stock Report Printer ===
   const handlePrintStockReport = () => {
-    const printWindow = window.open('', '_blank', 'width=900,height=700')
-    const totalDozensAll = inventory.reduce((acc, item) => acc + (Number(item.qty || 0) / 12), 0)
+    if (inventory.length === 0) {
+      alert('No inventory stock available to print.')
+      return
+    }
 
-    const tableRows = inventory.map((item, idx) => {
-      const pairs = Number(item.qty || 0)
-      const dozens = pairs / 12
-      const articleNo = item.articleNumber || item.model || 'N/A'
-      const punjabPrice = Number(item.pricePunjab ?? item.price ?? 0)
-      const sindhPrice = Number(item.priceSindh ?? item.price ?? 0)
-      const totalVal = pairs * punjabPrice
+    const printWindow = window.open('', '_blank', 'width=1000,height=800')
+    if (!printWindow) {
+      alert('Please allow pop-ups to print the stock report.')
+      return
+    }
 
-      return `
-        <tr>
-          <td style="text-align: center;">${idx + 1}</td>
-          <td style="text-align: center;">#${item.id}</td>
-          <td><strong>${articleNo}</strong></td>
-          <td style="text-align: center;">${item.size || 'N/A'} | ${item.color || 'N/A'}</td>
-          <td style="text-align: center; font-weight: bold; color: #16a34a;">${dozens.toFixed(2)} dozens (${pairs} pairs)</td>
-          <td style="text-align: right;">Rs. ${punjabPrice.toLocaleString()}</td>
-          <td style="text-align: right; font-weight: bold;">Rs. ${totalVal.toLocaleString()}</td>
+    // Group inventory by articleNumber for subtotals
+    const grouped = Object.entries(inventoryByArticle).sort(([a], [b]) => a.localeCompare(b))
+
+    const totalPairsAll = stockTotals.totalPairs
+    const totalDozensAll = stockTotals.totalDozens
+    const totalValueAll = stockReportRegion === 'Sindh' ? stockTotals.totalValueSindh : stockTotals.totalValuePunjab
+
+    let rowIndex = 0
+    const tableRows = grouped.map(([articleNumber, variants]) => {
+      const articlePairs = variants.reduce((acc, v) => acc + numberOrZero(v.qty), 0)
+      const articleDozens = articlePairs / 12
+      const articleValue = variants.reduce((acc, v) => {
+        const price = stockReportRegion === 'Sindh'
+          ? numberOrZero(v.priceSindh ?? v.price)
+          : numberOrZero(v.pricePunjab ?? v.price)
+        return acc + (numberOrZero(v.qty) * price)
+      }, 0)
+
+      const parentRow = `
+        <tr style="background-color: #ede9fe;">
+          <td colspan="4" style="text-align: right; font-weight: 800; color: #5b21b6;">
+            PARENT ARTICLE: ${articleNumber}
+            <span style="font-weight: 600; color: #6b7280; margin-left: 6px;">(${variants.length} variant${variants.length === 1 ? '' : 's'})</span>
+          </td>
+          <td style="text-align: center; font-weight: 800; color: #5b21b6;">${articleDozens.toFixed(2)} dozens <span style="font-weight: 500; color: #6b7280;">(${articlePairs} pairs)</span></td>
+          <td style="text-align: right; font-weight: 800; color: #5b21b6;">Rs. ${articleValue.toLocaleString()}</td>
         </tr>
       `
+
+      const variantRows = variants.map(item => {
+        rowIndex += 1
+        const pairs = numberOrZero(item.qty)
+        const dozens = pairs / 12
+        const punjabPrice = numberOrZero(item.pricePunjab ?? item.price)
+        const sindhPrice = numberOrZero(item.priceSindh ?? item.price)
+        const activePrice = stockReportRegion === 'Sindh' ? sindhPrice : punjabPrice
+        const lineValue = pairs * activePrice
+
+        return `
+          <tr>
+            <td style="text-align: center;">${rowIndex}</td>
+            <td style="text-align: center;">#${item.id}</td>
+            <td>${item.articleNumber || item.model || 'N/A'}</td>
+            <td style="text-align: center;">${item.size || 'N/A'} | ${item.color || 'N/A'}</td>
+            <td style="text-align: center; font-weight: bold; color: #16a34a;">${dozens.toFixed(2)} dozens <span style="font-weight: 500; color: #64748b;">(${pairs} pairs)</span></td>
+            <td style="text-align: right; font-weight: bold;">Rs. ${lineValue.toLocaleString()}</td>
+          </tr>
+        `
+      }).join('')
+
+      return parentRow + variantRows
     }).join('')
 
     printWindow.document.write(`
       <html>
         <head>
-          <title>Stock Inventory Report - Dozens Breakdown</title>
+          <title>Stock Inventory Report - ${stockReportRegion} Region</title>
           <style>
-            body { font-family: 'Helvetica Neue', Arial, sans-serif; padding: 20px; color: #1e293b; background: #fff; margin: 0; font-size: 12px; }
-            .header { display: flex; justify-content: space-between; border-bottom: 2px solid #714B67; padding-bottom: 12px; margin-bottom: 20px; }
+            body { font-family: 'Helvetica Neue', Arial, sans-serif; padding: 18px; color: #1e293b; background: #fff; margin: 0; font-size: 11px; }
+            .header { display: flex; justify-content: space-between; border-bottom: 2px solid #714B67; padding-bottom: 12px; margin-bottom: 15px; }
             .company-name { font-size: 20px; font-weight: 800; text-transform: uppercase; color: #714B67; margin: 0; }
-            table { width: 100%; border-collapse: collapse; margin-top: 15px; }
-            th, td { border: 1px solid #cbd5e1; padding: 8px; font-size: 11px; }
+            table { width: 100%; border-collapse: collapse; margin-top: 12px; }
+            th, td { border: 1px solid #cbd5e1; padding: 6px 8px; font-size: 10.5px; }
             th { background-color: #f1f5f9; color: #334155; font-weight: 700; text-transform: uppercase; }
-            .summary-box { background: #f8fafc; border: 1px solid #e2e8f0; padding: 15px; border-radius: 6px; margin-top: 20px; font-size: 14px; font-weight: bold; display: flex; justify-content: space-between; }
-            .footer { margin-top: 30px; text-align: center; font-size: 10px; color: #94a3b8; border-top: 1px solid #e2e8f0; padding-top: 10px; }
-            @media print { body { padding: 0; } @page { size: A4 portrait; margin: 10mm; } }
+            .summary-box { display: flex; justify-content: space-between; align-items: center; background: #f8fafc; border: 2px solid #714B67; padding: 14px 18px; border-radius: 8px; margin-top: 18px; font-size: 14px; font-weight: bold; page-break-inside: avoid; }
+            .footer { margin-top: 22px; text-align: center; font-size: 10px; color: #94a3b8; border-top: 1px solid #e2e8f0; padding-top: 8px; }
+            @media print { body { padding: 0; } @page { size: A4 landscape; margin: 8mm; } }
           </style>
         </head>
         <body>
           <div class="header">
             <div>
               <h1 class="company-name">PLUS EVR ERP Factory</h1>
-              <div>Comprehensive Stock & Dozens Inventory Report</div>
+              <div style="color: #64748b;">Comprehensive Stock & Dozens Inventory Report</div>
+              <div style="color: #64748b;"><strong>Region Pricing Applied:</strong> ${stockReportRegion}</div>
             </div>
-            <div style="text-align: right;">
+            <div style="text-align: right; font-size: 11px; line-height: 1.6;">
               <div><strong>Date:</strong> ${new Date().toISOString().split('T')[0]}</div>
-              <div><strong>Total Articles:</strong> ${inventory.length}</div>
+              <div><strong>Total Articles:</strong> ${grouped.length}</div>
+              <div><strong>Total Variants:</strong> ${inventory.length}</div>
             </div>
           </div>
 
           <table>
             <thead>
               <tr>
-                <th style="text-align: center;">#</th>
-                <th style="text-align: center;">ID</th>
-                <th>Article Number</th>
-                <th style="text-align: center;">Size & Color</th>
-                <th style="text-align: center;">Stock (Dozens & Pairs)</th>
-                <th style="text-align: right;">Punjab Price/Pair</th>
-                <th style="text-align: right;">Total Valuation</th>
+                <th style="text-align: center; width: 40px;">#</th>
+                <th style="text-align: center; width: 60px;">ID</th>
+                <th style="text-align: left;">Article Number</th>
+                <th style="text-align: center; width: 130px;">Size & Color</th>
+                <th style="text-align: center; width: 180px;">Stock (Dozens & Pairs)</th>
+                <th style="text-align: right; width: 140px;">Total Valuation</th>
               </tr>
             </thead>
             <tbody>
@@ -1152,8 +1180,10 @@ export default function App() {
           </table>
 
           <div class="summary-box">
-            <span>Grand Total Factory Stock:</span>
-            <span style="color: #714B67;">${totalDozensAll.toFixed(2)} Dozens</span>
+            <span>GRAND TOTAL FACTORY STOCK:</span>
+            <span style="color: #16a34a;">${totalDozensAll.toFixed(2)} Dozens</span>
+            <span style="color: #64748b; font-weight: 600;">(${totalPairsAll.toLocaleString()} pairs)</span>
+            <span style="color: #714B67;">Rs. ${totalValueAll.toLocaleString()}</span>
           </div>
 
           <div class="footer">
@@ -1175,7 +1205,7 @@ export default function App() {
   const handlePrintCustomerReport = (customer, periodSales, periodPayments, openingApprox, netDue) => {
     const printWindow = window.open('', '_blank', 'width=800,height=600');
 
-    const salesRows = periodSales.length === 0 
+    const salesRows = periodSales.length === 0
       ? `<tr><td colspan="3" style="text-align:center; color:#94a3b8;">اس مدت میں کوئی نیا بل نہیں بنایا گیا۔</td></tr>`
       : periodSales.map(s => `
           <tr>
@@ -1185,7 +1215,7 @@ export default function App() {
           </tr>
         `).join('');
 
-    const paymentsRows = periodPayments.length === 0 
+    const paymentsRows = periodPayments.length === 0
       ? `<tr><td colspan="3" style="text-align:center; color:#94a3b8;">اس مدت میں کوئی رقم وصول نہیں ہوئی۔</td></tr>`
       : periodPayments.map(p => `
           <tr>
@@ -1281,11 +1311,11 @@ export default function App() {
   const handleSendReportWhatsApp = (customer, periodSales, periodPayments, netDue) => {
     handlePrintCustomerReport(customer, periodSales, periodPayments, 0, netDue);
 
-    const salesSummary = periodSales.length > 0 
+    const salesSummary = periodSales.length > 0
       ? periodSales.map(s => `• بل #${s.id} (${s.date}) [ٹرانسپورٹ: ${s.transportCompany || 'N/A'}]: Rs. ${s.total.toLocaleString()}`).join('\n')
       : '• کوئی نیا بل نہیں';
 
-    const paymentsSummary = periodPayments.length > 0 
+    const paymentsSummary = periodPayments.length > 0
       ? periodPayments.map(p => `• وصولی (${p.date}): Rs. ${p.amount.toLocaleString()}`).join('\n')
       : '• کوئی وصولی نہیں';
 
@@ -1302,7 +1332,7 @@ export default function App() {
       `_براہ کرم اپنے کھاتے کی تصدیق کریں۔ شکریہ!_ 🙏`;
 
     const encodedMessage = encodeURIComponent(message);
-    const whatsappUrl = customer.whatsapp 
+    const whatsappUrl = customer.whatsapp
       ? `https://api.whatsapp.com/send?phone=${customer.whatsapp}&text=${encodedMessage}`
       : `https://api.whatsapp.com/send?text=${encodedMessage}`;
 
@@ -1325,6 +1355,67 @@ export default function App() {
     { id: 'pwa', label: 'Mobile' }
   ]
 
+  // === Feature 3: Filtered inventory for stock report view ===
+  const filteredStockInventory = useMemo(() => {
+    const q = stockReportSearch.trim().toLowerCase()
+    if (!q) return inventory
+    return inventory.filter(item => {
+      const haystack = `${item.id} ${item.articleNumber || ''} ${item.model || ''} ${item.size || ''} ${item.color || ''}`.toLowerCase()
+      return haystack.includes(q)
+    })
+  }, [inventory, stockReportSearch])
+
+  const filteredStockTotals = useMemo(() => {
+    const totalPairs = filteredStockInventory.reduce((acc, item) => acc + numberOrZero(item.qty), 0)
+    const totalDozens = totalPairs / 12
+    const totalValue = filteredStockInventory.reduce((acc, item) => {
+      const price = stockReportRegion === 'Sindh'
+        ? numberOrZero(item.priceSindh ?? item.price)
+        : numberOrZero(item.pricePunjab ?? item.price)
+      return acc + (numberOrZero(item.qty) * price)
+    }, 0)
+    return { totalPairs, totalDozens, totalValue }
+  }, [filteredStockInventory, stockReportRegion])
+
+  if (!token) {
+    return (
+      <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh', backgroundColor: '#f8fafc', fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif' }}>
+        <form onSubmit={handleLogin} style={{ background: '#fff', padding: '40px', borderRadius: '12px', boxShadow: '0 4px 12px rgba(0,0,0,0.1)', width: '100%', maxWidth: '400px', border: '1px solid #e2e8f0' }}>
+          <div style={{ textAlign: 'center', marginBottom: '24px' }}>
+            <h2 style={{ margin: '10px 0 0 0', color: '#714B67', fontSize: '20px', fontWeight: '800' }}>PLUS EVR ERP</h2>
+            <p style={{ margin: '5px 0 0 0', fontSize: '13px', color: '#64748b' }}>Secure Admin Portal</p>
+          </div>
+
+          {loginError && <p style={{ color: '#dc2626', marginBottom: '15px', fontSize: '13px', textAlign: 'center', fontWeight: '600' }}>{loginError}</p>}
+
+          <div style={{ marginBottom: '15px' }}>
+            <label style={{ display: 'block', marginBottom: '6px', fontSize: '12px', fontWeight: '700', color: '#475569', textTransform: 'uppercase' }}>Username</label>
+            <input
+              type="text"
+              value={loginForm.username}
+              onChange={(e) => setLoginForm({...loginForm, username: e.target.value})}
+              style={{ width: '100%', padding: '10px', borderRadius: '6px', border: '1px solid #cbd5e1', boxSizing: 'border-box', fontSize: '14px' }}
+              required
+            />
+          </div>
+          <div style={{ marginBottom: '24px' }}>
+            <label style={{ display: 'block', marginBottom: '6px', fontSize: '12px', fontWeight: '700', color: '#475569', textTransform: 'uppercase' }}>Password</label>
+            <input
+              type="password"
+              value={loginForm.password}
+              onChange={(e) => setLoginForm({...loginForm, password: e.target.value})}
+              style={{ width: '100%', padding: '10px', borderRadius: '6px', border: '1px solid #cbd5e1', boxSizing: 'border-box', fontSize: '14px' }}
+              required
+            />
+          </div>
+          <button type="submit" style={{ width: '100%', backgroundColor: '#714B67', color: '#fff', padding: '12px', border: 'none', borderRadius: '6px', fontWeight: '700', cursor: 'pointer', fontSize: '14px' }}>
+            Sign In to ERP
+          </button>
+        </form>
+      </div>
+    )
+  }
+
   return (
     <div style={{ minHeight: '100vh', width: '100%', margin: 0, padding: 0, backgroundColor: '#f8fafc', color: '#0f172a', fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif', boxSizing: 'border-box' }}>
 
@@ -1337,7 +1428,7 @@ export default function App() {
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', backgroundColor: '#5c3c53', padding: '4px', borderRadius: '8px' }}>
             {tabs.map(tab => (
-              <button 
+              <button
                 key={tab.id}
                 onClick={() => setActiveTab(tab.id)}
                 style={{
@@ -1358,7 +1449,7 @@ export default function App() {
               </button>
             ))}
           </div>
-          <button 
+          <button
             onClick={handleLogout}
             style={{ backgroundColor: '#dc2626', color: '#fff', border: 'none', padding: '6px 12px', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: '700' }}
           >
@@ -1398,6 +1489,11 @@ export default function App() {
               <div style={{ backgroundColor: '#ffffff', padding: '20px', borderRadius: '10px', border: '1px solid #e2e8f0', boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}>
                 <p style={{ fontSize: '11px', color: '#64748b', fontWeight: '700', margin: '0 0 8px 0', letterSpacing: '0.5px' }}>INVENTORY WORTH</p>
                 <p style={{ fontSize: '24px', fontWeight: '800', color: '#714B67', margin: 0, wordBreak: 'break-all' }}>Rs. {totalInventoryValue.toLocaleString()}</p>
+              </div>
+              <div style={{ backgroundColor: '#ffffff', padding: '20px', borderRadius: '10px', border: '1px solid #e2e8f0', boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}>
+                <p style={{ fontSize: '11px', color: '#64748b', fontWeight: '700', margin: '0 0 8px 0', letterSpacing: '0.5px' }}>TOTAL STOCK IN DOZENS</p>
+                <p style={{ fontSize: '24px', fontWeight: '800', color: '#0f766e', margin: 0, wordBreak: 'break-all' }}>{stockTotals.totalDozens.toFixed(2)} Dozens</p>
+                <p style={{ fontSize: '11px', color: '#64748b', margin: '4px 0 0 0' }}>({formatPairs(stockTotals.totalPairs)} pairs)</p>
               </div>
             </div>
 
@@ -1464,6 +1560,24 @@ export default function App() {
         {activeTab === 'inventory' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
             <h2 style={{ margin: 0, fontSize: '18px', fontWeight: '700', color: '#1e293b' }}>Stock & Regional Pricing (Stock in Dozens & Pairs)</h2>
+
+            {/* === Feature 2: Stock Totals Summary Bar === */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '12px' }}>
+              <div style={{ backgroundColor: '#f0fdf4', border: '1px solid #bbf7d0', padding: '16px 18px', borderRadius: '8px' }}>
+                <p style={{ margin: 0, fontSize: '11px', fontWeight: '700', color: '#15803d', letterSpacing: '0.5px' }}>TOTAL STOCK (DOZENS)</p>
+                <p style={{ margin: '4px 0 0 0', fontSize: '22px', fontWeight: '800', color: '#16a34a' }}>{stockTotals.totalDozens.toFixed(2)} Dozens</p>
+                <p style={{ margin: '2px 0 0 0', fontSize: '12px', color: '#64748b' }}>({stockTotals.totalPairs.toLocaleString()} pairs)</p>
+              </div>
+              <div style={{ backgroundColor: '#faf5f8', border: '1px solid #f0d8ec', padding: '16px 18px', borderRadius: '8px' }}>
+                <p style={{ margin: 0, fontSize: '11px', fontWeight: '700', color: '#714B67', letterSpacing: '0.5px' }}>TOTAL INVENTORY VALUE</p>
+                <p style={{ margin: '4px 0 0 0', fontSize: '22px', fontWeight: '800', color: '#714B67' }}>Rs. {totalInventoryValue.toLocaleString()}</p>
+              </div>
+              <div style={{ backgroundColor: '#eff6ff', border: '1px solid #bfdbfe', padding: '16px 18px', borderRadius: '8px' }}>
+                <p style={{ margin: 0, fontSize: '11px', fontWeight: '700', color: '#1d4ed8', letterSpacing: '0.5px' }}>ARTICLES / VARIANTS</p>
+                <p style={{ margin: '4px 0 0 0', fontSize: '22px', fontWeight: '800', color: '#2563eb' }}>{stockTotals.uniqueArticles} / {stockTotals.variantCount}</p>
+              </div>
+            </div>
+
             <form onSubmit={handleAddInventory} style={{ backgroundColor: '#ffffff', padding: '20px', borderRadius: '10px', border: '1px solid #e2e8f0', boxShadow: '0 1px 3px rgba(0,0,0,0.05)', display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: '12px' }}>
               <input type="text" placeholder="Article Number" value={newItem.articleNumber} onChange={e=>setNewItem({...newItem, articleNumber: e.target.value})} style={{ padding: '10px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '14px', width: '100%', boxSizing: 'border-box' }} required />
               <input type="text" placeholder="Size (e.g. 42)" value={newItem.size} onChange={e=>setNewItem({...newItem, size: e.target.value})} style={{ padding: '10px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '14px', width: '100%', boxSizing: 'border-box' }} />
@@ -1511,8 +1625,8 @@ export default function App() {
                         <td style={{ padding: '14px', color: '#0f172a', fontWeight: '600' }}>Rs. {(item.pricePunjab !== undefined && item.pricePunjab !== null ? item.pricePunjab : (item.price || 0)).toLocaleString()}</td>
                         <td style={{ padding: '14px', color: '#2563eb', fontWeight: '600' }}>Rs. {(item.priceSindh !== undefined && item.priceSindh !== null ? item.priceSindh : (item.price || 0)).toLocaleString()}</td>
                         <td style={{ padding: '14px', textAlign: 'center' }}>
-                          <div style={{ display: 'flex', gap: '6px', justifyContent: 'center', alignItems: 'center' }}>
-                            <input 
+                          <div style={{ display: 'flex', gap: '6px', justifyContent: 'center', alignItems: 'center', flexWrap: 'wrap' }}>
+                            <input
                               type="number"
                               placeholder="+ Pairs"
                               value={inputVal}
@@ -1533,7 +1647,7 @@ export default function App() {
                               onChange={e => setUpdatePriceInputs({ ...updatePriceInputs, [item.id]: { ...(updatePriceInputs[item.id] || {}), sindh: e.target.value } })}
                               style={{ padding: '6px 8px', borderRadius: '4px', border: '1px solid #cbd5e1', width: '85px', fontSize: '13px' }}
                             />
-                            <button 
+                            <button
                               onClick={() => handleUpdateInventoryStock(item)}
                               style={{ backgroundColor: '#16a34a', color: '#fff', border: 'none', padding: '7px 10px', borderRadius: '4px', cursor: 'pointer', fontWeight: '600', fontSize: '12px' }}
                             >
@@ -1545,7 +1659,7 @@ export default function App() {
                             >
                               Save Price
                             </button>
-                            <button 
+                            <button
                               onClick={() => handleDeleteProduct(item.id)}
                               style={{ backgroundColor: '#dc2626', color: '#fff', border: 'none', padding: '7px 10px', borderRadius: '4px', cursor: 'pointer', fontWeight: '600', fontSize: '12px' }}
                             >
@@ -1567,29 +1681,50 @@ export default function App() {
           <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
               <h2 style={{ margin: 0, fontSize: '18px', fontWeight: '700', color: '#1e293b' }}>📦 Stock Inventory Report & Dozens Summary</h2>
-              <button
-                onClick={handlePrintStockReport}
-                style={{ backgroundColor: '#2563eb', color: '#fff', border: 'none', padding: '10px 18px', borderRadius: '6px', fontWeight: '700', cursor: 'pointer', fontSize: '13px' }}
-              >
-                🖨️ Print / Save Stock Report PDF
-              </button>
+              <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+                <select
+                  value={stockReportRegion}
+                  onChange={e => setStockReportRegion(e.target.value)}
+                  style={{ padding: '10px 12px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '13px', backgroundColor: '#fff', fontWeight: '600' }}
+                >
+                  <option value="Punjab">Punjab Pricing</option>
+                  <option value="Sindh">Sindh Pricing</option>
+                </select>
+                <button
+                  onClick={handlePrintStockReport}
+                  style={{ backgroundColor: '#2563eb', color: '#fff', border: 'none', padding: '10px 18px', borderRadius: '6px', fontWeight: '700', cursor: 'pointer', fontSize: '13px' }}
+                >
+                  🖨️ Print / Save Stock Report PDF
+                </button>
+              </div>
             </div>
 
             <div style={{ backgroundColor: '#ffffff', padding: '24px', borderRadius: '10px', border: '1px solid #e2e8f0', boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}>
+              {/* === Feature 3: Filter by article === */}
+              <div style={{ marginBottom: '20px' }}>
+                <input
+                  type="text"
+                  placeholder="🔍 Filter by article number, size, or color..."
+                  value={stockReportSearch}
+                  onChange={e => setStockReportSearch(e.target.value)}
+                  style={{ width: '100%', padding: '12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '14px', boxSizing: 'border-box' }}
+                />
+              </div>
+
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '15px', marginBottom: '25px' }}>
                 <div style={{ backgroundColor: '#f0fdf4', border: '1px solid #bbf7d0', padding: '18px', borderRadius: '8px' }}>
                   <p style={{ margin: '0 0 5px 0', fontSize: '12px', fontWeight: '700', color: '#15803d' }}>GRAND TOTAL FACTORY STOCK</p>
                   <p style={{ margin: 0, fontSize: '24px', fontWeight: '800', color: '#16a34a' }}>
-                    {(inventory.reduce((acc, item) => acc + Number(item.qty || 0), 0) / 12).toFixed(2)} Dozens
+                    {filteredStockTotals.totalDozens.toFixed(2)} Dozens
                   </p>
                   <p style={{ margin: '4px 0 0 0', fontSize: '12px', color: '#64748b' }}>
-                    ({inventory.reduce((acc, item) => acc + Number(item.qty || 0), 0).toLocaleString()} total pairs)
+                    ({filteredStockTotals.totalPairs.toLocaleString()} total pairs)
                   </p>
                 </div>
                 <div style={{ backgroundColor: '#faf5f8', border: '1px solid #f0d8ec', padding: '18px', borderRadius: '8px' }}>
-                  <p style={{ margin: '0 0 5px 0', fontSize: '12px', fontWeight: '700', color: '#714B67' }}>TOTAL INVENTORY VALUATION</p>
+                  <p style={{ margin: '0 0 5px 0', fontSize: '12px', fontWeight: '700', color: '#714B67' }}>TOTAL INVENTORY VALUATION ({stockReportRegion})</p>
                   <p style={{ margin: 0, fontSize: '24px', fontWeight: '800', color: '#714B67' }}>
-                    Rs. {totalInventoryValue.toLocaleString()}
+                    Rs. {filteredStockTotals.totalValue.toLocaleString()}
                   </p>
                 </div>
               </div>
@@ -1603,18 +1738,20 @@ export default function App() {
                       <th style={{ padding: '12px' }}>Size & Color</th>
                       <th style={{ padding: '12px' }}>Stock in Dozens</th>
                       <th style={{ padding: '12px' }}>Total Pairs</th>
-                      <th style={{ padding: '12px' }}>Punjab Price / Pair</th>
+                      <th style={{ padding: '12px' }}>{stockReportRegion} Price / Pair</th>
                       <th style={{ padding: '12px' }}>Total Line Value</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {inventory.length === 0 ? (
-                      <tr><td colSpan="7" style={{ padding: '20px', textAlign: 'center', color: '#94a3b8' }}>No inventory stock available.</td></tr>
+                    {filteredStockInventory.length === 0 ? (
+                      <tr><td colSpan="7" style={{ padding: '20px', textAlign: 'center', color: '#94a3b8' }}>No inventory stock matches the filter.</td></tr>
                     ) : (
-                      inventory.map(item => {
+                      filteredStockInventory.map(item => {
                         const pairs = Number(item.qty || 0);
                         const dozens = (pairs / 12).toFixed(2);
-                        const price = Number(item.pricePunjab ?? item.price ?? 0);
+                        const price = stockReportRegion === 'Sindh'
+                          ? Number(item.priceSindh ?? item.price ?? 0)
+                          : Number(item.pricePunjab ?? item.price ?? 0);
                         const totalVal = pairs * price;
                         return (
                           <tr key={item.id} style={{ borderBottom: '1px solid #f1f5f9', fontSize: '14px' }}>
@@ -1641,7 +1778,7 @@ export default function App() {
             <h2 style={{ fontSize: '20px', fontWeight: '800', marginBottom: '8px', color: '#1e293b' }}>Live Inventory Search</h2>
             <p style={{ fontSize: '13px', color: '#64748b', marginBottom: '20px' }}>Type an article no, size, or color to check stock availability and regional pricing directly.</p>
 
-            <input 
+            <input
               type="text"
               placeholder="Search by article no, size, or color..."
               onChange={(e) => {
@@ -1677,8 +1814,8 @@ export default function App() {
                       const pairs = Number(item.qty || 0);
                       const dozens = (pairs / 12).toFixed(2);
                       return (
-                        <tr 
-                          key={item.id} 
+                        <tr
+                          key={item.id}
                           className="search-item-row"
                           data-search={`${item.id} ${item.articleNumber || item.model} ${item.model} ${item.size} ${item.color}`}
                           style={{ borderBottom: '1px solid #f1f5f9', fontSize: '14px' }}
@@ -1778,14 +1915,14 @@ export default function App() {
                         </td>
                         <td style={{ padding: '14px', textAlign: 'center' }}>
                           <div style={{ display: 'flex', gap: '6px', justifyContent: 'center', alignItems: 'center' }}>
-                            <input 
+                            <input
                               type="number"
                               placeholder="Amount"
                               value={typedAmount}
                               onChange={e => setPaymentInputs({...paymentInputs, [c.id]: e.target.value})}
                               style={{ padding: '6px 8px', borderRadius: '4px', border: '1px solid #cbd5e1', width: '90px', fontSize: '13px' }}
                             />
-                            <button 
+                            <button
                               onClick={() => {
                                 const amount = Number(typedAmount);
                                 if (!amount || isNaN(amount) || amount <= 0) {
@@ -1828,13 +1965,13 @@ export default function App() {
         {activeTab === 'reports' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
             <h2 style={{ margin: 0, fontSize: '18px', fontWeight: '700', color: '#1e293b' }}>گاہک کی ہفتہ وار یا کسٹم رپورٹ جنریٹر (Customer Report Generator)</h2>
-            
+
             <div style={{ backgroundColor: '#ffffff', padding: '24px', borderRadius: '10px', border: '1px solid #e2e8f0', boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '15px', marginBottom: '20px' }}>
                 <div>
                   <label style={{ display: 'block', fontSize: '12px', fontWeight: '700', color: '#475569', marginBottom: '6px' }}>گاہک منتخب کریں (Select Customer)</label>
-                  <select 
-                    value={reportCustId} 
+                  <select
+                    value={reportCustId}
                     onChange={e => setReportCustId(e.target.value)}
                     style={{ padding: '10px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '14px', width: '100%', backgroundColor: '#fff', boxSizing: 'border-box' }}
                   >
@@ -1847,20 +1984,20 @@ export default function App() {
 
                 <div>
                   <label style={{ display: 'block', fontSize: '12px', fontWeight: '700', color: '#475569', marginBottom: '6px' }}>شروع کی تاریخ (Start Date)</label>
-                  <input 
-                    type="date" 
-                    value={reportStartDate} 
-                    onChange={e => setReportStartDate(e.target.value)} 
+                  <input
+                    type="date"
+                    value={reportStartDate}
+                    onChange={e => setReportStartDate(e.target.value)}
                     style={{ padding: '10px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '14px', width: '100%', boxSizing: 'border-box' }}
                   />
                 </div>
 
                 <div>
                   <label style={{ display: 'block', fontSize: '12px', fontWeight: '700', color: '#475569', marginBottom: '6px' }}>آخری تاریخ (End Date)</label>
-                  <input 
-                    type="date" 
-                    value={reportEndDate} 
-                    onChange={e => setReportEndDate(e.target.value)} 
+                  <input
+                    type="date"
+                    value={reportEndDate}
+                    onChange={e => setReportEndDate(e.target.value)}
                     style={{ padding: '10px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '14px', width: '100%', boxSizing: 'border-box' }}
                   />
                 </div>
@@ -1892,13 +2029,13 @@ export default function App() {
                         <p style={{ margin: 0, fontSize: '13px', color: '#64748b' }}>علاقہ: {selectedCust.region || 'Punjab'} | مدت: {reportStartDate} سے {reportEndDate}</p>
                       </div>
                       <div style={{ display: 'flex', gap: '10px' }}>
-                        <button 
+                        <button
                           onClick={() => handlePrintCustomerReport(selectedCust, periodSales, periodPayments, 0, netDue)}
                           style={{ backgroundColor: '#2563eb', color: '#fff', border: 'none', padding: '10px 16px', borderRadius: '6px', fontWeight: '700', cursor: 'pointer', fontSize: '13px' }}
                         >
                           🖨️ پرنٹ / PDF رپورٹ
                         </button>
-                        <button 
+                        <button
                           onClick={() => handleSendReportWhatsApp(selectedCust, periodSales, periodPayments, netDue)}
                           style={{ backgroundColor: '#16a34a', color: '#fff', border: 'none', padding: '10px 16px', borderRadius: '6px', fontWeight: '700', cursor: 'pointer', fontSize: '13px' }}
                         >
@@ -1998,7 +2135,7 @@ export default function App() {
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '15px', marginBottom: '20px', alignItems: 'flex-end' }}>
                 <div>
                   <label style={{ display: 'block', fontSize: '12px', fontWeight: '700', color: '#475569', marginBottom: '5px' }}>Select Customer / Shop</label>
-                  <select 
+                  <select
                     value={selectedCustomerId}
                     onChange={e => {
                       const custId = e.target.value;
@@ -2037,20 +2174,20 @@ export default function App() {
 
                 <div>
                   <label style={{ display: 'block', fontSize: '12px', fontWeight: '700', color: '#475569', marginBottom: '5px' }}>Unique ID (Auto-Filled)</label>
-                  <input 
-                    type="text" 
-                    placeholder="Auto-filled Unique ID..." 
-                    value={saleCustomerUniqueId} 
+                  <input
+                    type="text"
+                    placeholder="Auto-filled Unique ID..."
+                    value={saleCustomerUniqueId}
                     readOnly
-                    style={{ padding: '10px', borderRadius: '6px', border: '1px solid #cbd5e1', backgroundColor: '#f8fafc', fontSize: '14px', width: '100%', boxSizing: 'border-box', fontWeight: '700', color: '#2563eb' }} 
-                    required 
+                    style={{ padding: '10px', borderRadius: '6px', border: '1px solid #cbd5e1', backgroundColor: '#f8fafc', fontSize: '14px', width: '100%', boxSizing: 'border-box', fontWeight: '700', color: '#2563eb' }}
+                    required
                   />
                 </div>
 
                 <div>
                   <label style={{ display: 'block', fontSize: '12px', fontWeight: '700', color: '#475569', marginBottom: '5px' }}>Region (Auto-Applies Regional Price)</label>
-                  <select 
-                    value={saleCustomerRegion} 
+                  <select
+                    value={saleCustomerRegion}
                     onChange={e => {
                       const newReg = e.target.value;
                       setSaleCustomerRegion(newReg);
@@ -2073,23 +2210,23 @@ export default function App() {
 
                 <div>
                   <label style={{ display: 'block', fontSize: '12px', fontWeight: '700', color: '#475569', marginBottom: '5px' }}>Transport Company</label>
-                  <input 
-                    type="text" 
-                    placeholder="e.g. Niazi Express / Daewoo" 
-                    value={transportCompany} 
-                    onChange={e => setTransportCompany(e.target.value)} 
-                    style={{ padding: '10px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '14px', width: '100%', boxSizing: 'border-box' }} 
+                  <input
+                    type="text"
+                    placeholder="e.g. Niazi Express / Daewoo"
+                    value={transportCompany}
+                    onChange={e => setTransportCompany(e.target.value)}
+                    style={{ padding: '10px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '14px', width: '100%', boxSizing: 'border-box' }}
                   />
                 </div>
 
                 <div>
                   <label style={{ display: 'block', fontSize: '12px', fontWeight: '700', color: '#475569', marginBottom: '5px' }}>Builty Number</label>
-                  <input 
-                    type="text" 
-                    placeholder="e.g. B-98421" 
-                    value={builtyNo} 
-                    onChange={e => setBuiltyNo(e.target.value)} 
-                    style={{ padding: '10px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '14px', width: '100%', boxSizing: 'border-box' }} 
+                  <input
+                    type="text"
+                    placeholder="e.g. B-98421"
+                    value={builtyNo}
+                    onChange={e => setBuiltyNo(e.target.value)}
+                    style={{ padding: '10px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '14px', width: '100%', boxSizing: 'border-box' }}
                   />
                 </div>
               </div>
@@ -2103,8 +2240,8 @@ export default function App() {
 
                 return (
                   <div key={index} style={{ display: 'flex', gap: '10px', marginBottom: '12px', alignItems: 'center', flexWrap: 'wrap', backgroundColor: '#f8fafc', padding: '12px', borderRadius: '8px', border: '1px solid #e2e8f0' }}>
-                    <select 
-                      value={item.productId ? item.productId.toString() : ''} 
+                    <select
+                      value={item.productId ? item.productId.toString() : ''}
                       onChange={e => handleCartItemChange(index, 'productId', e.target.value)}
                       style={{ padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '14px', flex: '2', minWidth: '200px', backgroundColor: '#fff', color: '#0f172a' }}
                       required
@@ -2117,17 +2254,17 @@ export default function App() {
                       ))}
                     </select>
 
-                    <input 
-                      type="number" 
-                      placeholder="Qty" 
-                      value={item.qty} 
-                      onChange={e => handleCartItemChange(index, 'qty', e.target.value)} 
-                      style={{ padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '14px', width: '65px' }} 
-                      required 
+                    <input
+                      type="number"
+                      placeholder="Qty"
+                      value={item.qty}
+                      onChange={e => handleCartItemChange(index, 'qty', e.target.value)}
+                      style={{ padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '14px', width: '65px' }}
+                      required
                     />
-                    <select 
-                      value={item.unitType} 
-                      onChange={e => handleCartItemChange(index, 'unitType', e.target.value)} 
+                    <select
+                      value={item.unitType}
+                      onChange={e => handleCartItemChange(index, 'unitType', e.target.value)}
                       style={{ padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '12px', backgroundColor: '#fff', color: '#0f172a' }}
                     >
                       <option value="dozens">Dozens (12x)</option>
@@ -2148,9 +2285,9 @@ export default function App() {
                     </span>
 
                     {cartItems.length > 1 && (
-                      <button 
-                        type="button" 
-                        onClick={() => removeCartRow(index)} 
+                      <button
+                        type="button"
+                        onClick={() => removeCartRow(index)}
                         style={{ backgroundColor: '#dc2626', color: '#fff', border: 'none', padding: '8px 10px', borderRadius: '6px', cursor: 'pointer', fontSize: '12px' }}
                       >
                         ✕
@@ -2160,16 +2297,16 @@ export default function App() {
                 )
               })}
 
-              <button 
-                type="button" 
-                onClick={addCartRow} 
+              <button
+                type="button"
+                onClick={addCartRow}
                 style={{ backgroundColor: '#f1f5f9', color: '#475569', border: '1px dashed #cbd5e1', padding: '8px 14px', borderRadius: '6px', cursor: 'pointer', fontSize: '13px', fontWeight: '600', marginTop: '5px', marginBottom: '20px' }}
               >
                 + Add Another Article
               </button>
 
               <div style={{ textAlign: 'right', borderTop: '1px solid #e2e8f0', paddingTop: '15px' }}>
-                <button 
+                <button
                   onClick={handleGenerateMultiItemBill}
                   style={{ backgroundColor: '#714B67', color: '#ffffff', fontWeight: '700', border: 'none', borderRadius: '6px', padding: '12px 24px', cursor: 'pointer', fontSize: '14px' }}
                 >
@@ -2220,14 +2357,14 @@ export default function App() {
                         <td style={{ padding: '14px' }}>
                           {isEditing ? (
                             <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                              <input 
+                              <input
                                 type="text"
                                 placeholder="Transport Company"
                                 defaultValue={s.transportCompany}
                                 onChange={e => setEditSaleInputs({...editSaleInputs, transportCompany: e.target.value})}
                                 style={{ padding: '4px 6px', fontSize: '12px', borderRadius: '4px', border: '1px solid #cbd5e1' }}
                               />
-                              <input 
+                              <input
                                 type="text"
                                 placeholder="Builty No"
                                 defaultValue={s.builtyNo}
@@ -2266,7 +2403,7 @@ export default function App() {
                         </td>
                         <td style={{ padding: '14px', textAlign: 'center' }}>
                           <div style={{ display: 'flex', gap: '6px', justifyContent: 'center', flexWrap: 'wrap' }}>
-                            <button 
+                            <button
                               onClick={() => handleViewBill(s)}
                               style={{
                                 backgroundColor: '#0f766e',
@@ -2281,7 +2418,7 @@ export default function App() {
                               👁️ View Bill
                             </button>
 
-                            <button 
+                            <button
                               onClick={() => handleViewPdfBill(s)}
                               style={{ backgroundColor: '#0f766e', color: '#fff', border: 'none', padding: '6px 10px', borderRadius: '6px', cursor: 'pointer', fontWeight: '600', fontSize: '12px' }}
                             >
@@ -2289,14 +2426,14 @@ export default function App() {
                             </button>
 
                             {isEditing ? (
-                              <button 
+                              <button
                                 onClick={() => handleUpdateSaleDetails(s.id)}
                                 style={{ backgroundColor: '#16a34a', color: '#fff', border: 'none', padding: '6px 10px', borderRadius: '6px', cursor: 'pointer', fontWeight: '600', fontSize: '12px' }}
                               >
                                 Save
                               </button>
                             ) : (
-                              <button 
+                              <button
                                 onClick={() => {
                                   setEditingSaleId(s.id);
                                   setEditSaleInputs({
@@ -2310,13 +2447,13 @@ export default function App() {
                                 Edit Bill Details
                               </button>
                             )}
-                            <button 
+                            <button
                               onClick={() => handlePrintBill(s)}
                               style={{ backgroundColor: '#2563eb', color: '#fff', border: 'none', padding: '6px 10px', borderRadius: '6px', cursor: 'pointer', fontWeight: '600', fontSize: '12px' }}
                             >
                               Download / Print PDF
                             </button>
-                            <button 
+                            <button
                               onClick={() => handleSendWhatsAppBill(s)}
                               style={{ backgroundColor: '#16a34a', color: '#fff', border: 'none', padding: '6px 10px', borderRadius: '6px', cursor: 'pointer', fontWeight: '600', fontSize: '12px' }}
                             >
@@ -2468,6 +2605,10 @@ export default function App() {
                   <span style={{ color: '#64748b', fontWeight: '600' }}>Inventory Stock</span>
                   <span style={{ fontWeight: '700', color: '#0f172a' }}>Rs. {totalInventoryValue.toLocaleString()}</span>
                 </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '14px', marginBottom: '10px' }}>
+                  <span style={{ color: '#64748b', fontWeight: '600' }}>Stock in Dozens</span>
+                  <span style={{ fontWeight: '700', color: '#16a34a' }}>{stockTotals.totalDozens.toFixed(2)} Dozens</span>
+                </div>
               </div>
               <div style={{ backgroundColor: '#f8fafc', padding: '20px', borderRadius: '8px', border: '1px solid #e2e8f0' }}>
                 <h3 style={{ color: '#dc2626', fontSize: '16px', fontWeight: '800', margin: '0 0 14px 0', borderBottom: '2px solid #e2e8f0', paddingBottom: '8px' }}>Liabilities & Capital</h3>
@@ -2490,7 +2631,7 @@ export default function App() {
         )}
       </main>
 
-      {/* View Bill Modal Overlay */}
+      {/* === Feature 1: View Bill Modal Overlay (Enhanced) === */}
       {selectedBill && (
         <div
           style={{
@@ -2503,23 +2644,24 @@ export default function App() {
             zIndex: 9999,
             padding: '20px'
           }}
-          onClick={() => setSelectedBill(null)}
+          onClick={closeBillModal}
         >
           <div
             style={{
               backgroundColor: '#fff',
               width: '100%',
-              maxWidth: '900px',
-              maxHeight: '90vh',
+              maxWidth: '950px',
+              maxHeight: '92vh',
               overflowY: 'auto',
               borderRadius: '12px',
-              padding: '30px',
-              position: 'relative'
+              padding: '28px',
+              position: 'relative',
+              boxShadow: '0 10px 40px rgba(0,0,0,0.25)'
             }}
             onClick={(e) => e.stopPropagation()}
           >
             <button
-              onClick={() => setSelectedBill(null)}
+              onClick={closeBillModal}
               style={{
                 position: 'absolute',
                 right: '15px',
@@ -2527,91 +2669,159 @@ export default function App() {
                 border: 'none',
                 background: '#ef4444',
                 color: '#fff',
-                width: '32px',
-                height: '32px',
+                width: '34px',
+                height: '34px',
                 borderRadius: '50%',
                 cursor: 'pointer',
-                fontSize: '18px'
+                fontSize: '20px',
+                fontWeight: '700',
+                lineHeight: 1
               }}
+              aria-label="Close bill preview"
             >
               ×
             </button>
 
-            <h2 style={{ marginBottom: '20px' }}>
-              Bill Preview (#{selectedBill.id})
-            </h2>
-
-            <p>
-              <strong>Customer:</strong> {selectedBill.customer} ({selectedBill.customerId || 'N/A'})
-            </p>
-
-            <p>
-              <strong>Transport Company:</strong>{' '}
-              {selectedBill.transportCompany || 'N/A'}
-            </p>
-
-            <p>
-              <strong>Builty No:</strong>{' '}
-              {selectedBill.builtyNo || 'N/A'}
-            </p>
-
-            <table
-              style={{
-                width: '100%',
-                borderCollapse: 'collapse',
-                marginTop: '20px'
-              }}
-            >
-              <thead>
-                <tr>
-                  <th style={{ padding: '10px', borderBottom: '1px solid #ddd', textAlign: 'left' }}>
-                    Item
-                  </th>
-                  <th style={{ padding: '10px', borderBottom: '1px solid #ddd' }}>
-                    Quantity
-                  </th>
-                  <th style={{ padding: '10px', borderBottom: '1px solid #ddd' }}>
-                    Price
-                  </th>
-                  <th style={{ padding: '10px', borderBottom: '1px solid #ddd' }}>
-                    Total
-                  </th>
-                </tr>
-              </thead>
-
-              <tbody>
-                {(selectedBill.lineItems || []).map((item, index) => (
-                  <tr key={index}>
-                    <td style={{ padding: '10px', borderBottom: '1px solid #eee' }}>
-                      {item.model || item.productName || 'Item'} (Size: {item.size || 'N/A'})
-                    </td>
-
-                    <td style={{ padding: '10px', textAlign: 'center', borderBottom: '1px solid #eee' }}>
-                      {item.qty || 0} {item.unitType || 'dozens'}
-                    </td>
-
-                    <td style={{ padding: '10px', textAlign: 'right', borderBottom: '1px solid #eee' }}>
-                      Rs. {Number(item.price || 0).toLocaleString()}
-                    </td>
-
-                    <td style={{ padding: '10px', textAlign: 'right', borderBottom: '1px solid #eee' }}>
-                      Rs. {Number((item.quantity || item.pairs || 0) * (item.price || 0) || item.grossAmount || 0).toLocaleString()}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-
-            <div
-              style={{
-                marginTop: '25px',
-                textAlign: 'right',
-                fontSize: '18px',
-                fontWeight: '700'
-              }}
-            >
-              Total: Rs. {Number(selectedBill.total || selectedBill.grandTotal || 0).toLocaleString()}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px', flexWrap: 'wrap', gap: '12px', paddingRight: '40px' }}>
+              <div>
+                <h2 style={{ margin: 0, color: '#714B67', fontSize: '20px', fontWeight: '800' }}>
+                  Invoice: {getInvoiceNumber(selectedBill)}
+                </h2>
+                <p style={{ margin: '4px 0 0 0', fontSize: '12px', color: '#64748b' }}>
+                  Bill ID #{selectedBill.id} | Region: {selectedBill.region || 'Punjab'}
+                </p>
+              </div>
+              <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                <button
+                  onClick={() => handlePrintBill(selectedBill)}
+                  style={{ backgroundColor: '#2563eb', color: '#fff', border: 'none', padding: '8px 14px', borderRadius: '6px', cursor: 'pointer', fontWeight: '700', fontSize: '13px' }}
+                >
+                  🖨️ Print / Save PDF
+                </button>
+                <button
+                  onClick={() => handleViewPdfBill(selectedBill)}
+                  style={{ backgroundColor: '#0f766e', color: '#fff', border: 'none', padding: '8px 14px', borderRadius: '6px', cursor: 'pointer', fontWeight: '700', fontSize: '13px' }}
+                >
+                  📄 View PDF Bill
+                </button>
+                <button
+                  onClick={() => handleSendWhatsAppBill(selectedBill)}
+                  style={{ backgroundColor: '#16a34a', color: '#fff', border: 'none', padding: '8px 14px', borderRadius: '6px', cursor: 'pointer', fontWeight: '700', fontSize: '13px' }}
+                >
+                  💬 WhatsApp
+                </button>
+              </div>
             </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '12px', backgroundColor: '#f8fafc', border: '1px solid #e2e8f0', padding: '14px 16px', borderRadius: '8px', marginBottom: '18px', fontSize: '13px' }}>
+              <div>
+                <div style={{ fontSize: '11px', color: '#64748b', fontWeight: '700', textTransform: 'uppercase', marginBottom: '3px' }}>Customer</div>
+                <div style={{ fontWeight: '800', color: '#0f172a' }}>{selectedBill.customer}</div>
+                <div style={{ fontSize: '12px', color: '#2563eb', fontWeight: '600' }}>ID: {selectedBill.customerId || 'N/A'}</div>
+              </div>
+              <div>
+                <div style={{ fontSize: '11px', color: '#64748b', fontWeight: '700', textTransform: 'uppercase', marginBottom: '3px' }}>Date</div>
+                <div style={{ fontWeight: '700', color: '#0f172a' }}>{selectedBill.date}</div>
+              </div>
+              <div>
+                <div style={{ fontSize: '11px', color: '#64748b', fontWeight: '700', textTransform: 'uppercase', marginBottom: '3px' }}>Transport</div>
+                <div style={{ fontWeight: '700', color: '#0f172a' }}>{selectedBill.transportCompany || 'N/A'}</div>
+              </div>
+              <div>
+                <div style={{ fontSize: '11px', color: '#64748b', fontWeight: '700', textTransform: 'uppercase', marginBottom: '3px' }}>Builty No</div>
+                <div style={{ fontWeight: '700', color: '#0f172a' }}>{selectedBill.builtyNo || 'N/A'}</div>
+              </div>
+            </div>
+
+            <div style={{ overflowX: 'auto', border: '1px solid #e2e8f0', borderRadius: '8px' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
+                <thead>
+                  <tr style={{ backgroundColor: '#f1f5f9', color: '#334155' }}>
+                    <th style={{ padding: '10px', textAlign: 'center', borderBottom: '1px solid #e2e8f0' }}>#</th>
+                    <th style={{ padding: '10px', textAlign: 'left', borderBottom: '1px solid #e2e8f0' }}>Item</th>
+                    <th style={{ padding: '10px', textAlign: 'center', borderBottom: '1px solid #e2e8f0' }}>Quantity</th>
+                    <th style={{ padding: '10px', textAlign: 'right', borderBottom: '1px solid #e2e8f0' }}>Rate / Pair</th>
+                    <th style={{ padding: '10px', textAlign: 'right', borderBottom: '1px solid #e2e8f0' }}>Line Total</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(selectedBill.lineItems || []).length === 0 ? (
+                    <tr>
+                      <td colSpan="5" style={{ padding: '20px', textAlign: 'center', color: '#94a3b8' }}>
+                        No line items found for this bill.
+                      </td>
+                    </tr>
+                  ) : (
+                    (selectedBill.lineItems || []).map((item, index) => {
+                      const pairs = numberOrZero(item.pairs) || (numberOrZero(item.qty) * (item.unitType === 'pairs' ? 1 : 12))
+                      const dozens = pairs / 12
+                      const lineTotal = numberOrZero(item.grossAmount) || (pairs * numberOrZero(item.price))
+                      return (
+                        <tr key={index} style={{ borderBottom: '1px solid #f1f5f9' }}>
+                          <td style={{ padding: '10px', textAlign: 'center', color: '#64748b' }}>{index + 1}</td>
+                          <td style={{ padding: '10px' }}>
+                            <div style={{ fontWeight: '700', color: '#0f172a' }}>
+                              {item.model || item.productName || item.description || 'Item'}
+                            </div>
+                            <div style={{ fontSize: '11px', color: '#64748b' }}>
+                              Article: #{item.productId || 'N/A'} | Size: {item.size || 'N/A'}
+                            </div>
+                          </td>
+                          <td style={{ padding: '10px', textAlign: 'center' }}>
+                            <div style={{ fontWeight: '700', color: '#16a34a' }}>{dozens.toFixed(2)} dozens</div>
+                            <div style={{ fontSize: '11px', color: '#64748b' }}>({pairs} pairs)</div>
+                          </td>
+                          <td style={{ padding: '10px', textAlign: 'right', fontWeight: '600' }}>
+                            Rs. {numberOrZero(item.price).toLocaleString()}
+                          </td>
+                          <td style={{ padding: '10px', textAlign: 'right', fontWeight: '800', color: '#2563eb' }}>
+                            Rs. {lineTotal.toLocaleString()}
+                          </td>
+                        </tr>
+                      )
+                    })
+                  )}
+                </tbody>
+              </table>
+            </div>
+
+            {(() => {
+              const billItems = selectedBill.lineItems || []
+              const totalPairs = billItems.reduce((acc, item) => {
+                const pairs = numberOrZero(item.pairs) || (numberOrZero(item.qty) * (item.unitType === 'pairs' ? 1 : 12))
+                return acc + pairs
+              }, 0)
+              const totalDozens = totalPairs / 12
+              const grossTotal = numberOrZero(selectedBill.rawTotal || selectedBill.total)
+              const discount = numberOrZero(selectedBill.discount)
+              const netTotal = numberOrZero(selectedBill.total)
+
+              return (
+                <div style={{ marginTop: '20px', display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: '16px' }}>
+                  <div style={{ backgroundColor: '#f0fdf4', border: '1px solid #bbf7d0', padding: '14px 16px', borderRadius: '8px' }}>
+                    <div style={{ fontSize: '11px', fontWeight: '700', color: '#15803d', textTransform: 'uppercase', marginBottom: '6px' }}>Total Quantity</div>
+                    <div style={{ fontSize: '20px', fontWeight: '800', color: '#16a34a' }}>{totalDozens.toFixed(2)} Dozens</div>
+                    <div style={{ fontSize: '12px', color: '#64748b' }}>({totalPairs.toLocaleString()} pairs)</div>
+                  </div>
+                  <div style={{ backgroundColor: '#f8fafc', border: '1px solid #e2e8f0', padding: '14px 16px', borderRadius: '8px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px', fontSize: '13px' }}>
+                      <span style={{ color: '#64748b', fontWeight: '600' }}>Bill Rate Total:</span>
+                      <span style={{ fontWeight: '700', color: '#0f172a' }}>Rs. {grossTotal.toLocaleString()}</span>
+                    </div>
+                    {discount > 0 && (
+                      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px', fontSize: '13px' }}>
+                        <span style={{ color: '#dc2626', fontWeight: '600' }}>Discount:</span>
+                        <span style={{ fontWeight: '700', color: '#dc2626' }}>- Rs. {discount.toLocaleString()}</span>
+                      </div>
+                    )}
+                    <div style={{ display: 'flex', justifyContent: 'space-between', borderTop: '1px solid #cbd5e1', paddingTop: '8px', marginTop: '4px' }}>
+                      <span style={{ fontWeight: '800', color: '#1e293b' }}>Net Payable:</span>
+                      <span style={{ fontWeight: '800', color: '#16a34a', fontSize: '16px' }}>Rs. {netTotal.toLocaleString()}</span>
+                    </div>
+                  </div>
+                </div>
+              )
+            })()}
           </div>
         </div>
       )}
