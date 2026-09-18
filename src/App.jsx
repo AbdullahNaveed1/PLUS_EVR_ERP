@@ -123,8 +123,6 @@ const normalizeSale = sale => {
   return { ...sale, lineItems: normalizedItems, discount: saleDiscount || knownDiscount }
 }
 
-// Format helpers for consistent Dozens/Pairs display
-const formatDozens = pairs => (numberOrZero(pairs) / 12).toFixed(2)
 const formatPairs = pairs => numberOrZero(pairs).toLocaleString()
 
 export default function App() {
@@ -198,16 +196,7 @@ export default function App() {
   const [editSaleInputs, setEditSaleInputs] = useState({ transportCompany: '', builtyNo: '', discountPerPair: {} })
   const [selectedSaleIds, setSelectedSaleIds] = useState([])
 
-  // === Feature 1: View Bill Modal State ===
-  const [selectedBill, setSelectedBill] = useState(null)
-  const handleViewBill = (sale) => {
-    setSelectedBill(sale)
-  }
-  const closeBillModal = () => setSelectedBill(null)
-
-  // === Feature 3: Stock Report Filters ===
   const [stockReportSearch, setStockReportSearch] = useState('')
-  const [stockReportRegion, setStockReportRegion] = useState('Punjab')
 
   const [reportCustId, setReportCustId] = useState('');
   const [reportStartDate, setReportStartDate] = useState(
@@ -307,7 +296,6 @@ export default function App() {
     setUsername(null)
   }
 
-  // === Feature 2 & 3: Memoized aggregate totals for stock ===
   const stockTotals = useMemo(() => {
     const totalPairs = inventory.reduce((acc, item) => acc + numberOrZero(item.qty), 0)
     const totalDozens = totalPairs / 12
@@ -548,9 +536,65 @@ export default function App() {
     setCartItems(cartItems.filter((_, i) => i !== index))
   }
 
+  // === Stock Deduction Helper — deducts sold quantity from inventory in DB ===
+  const deductStockFromInventory = async (lineItems) => {
+    const headers = { Authorization: `Bearer ${token}` }
+
+    // Group sold pairs by productId so multiple rows of the same item deduct once
+    const soldByProduct = {}
+    for (const item of lineItems) {
+      const pid = String(item.productId || '').trim()
+      if (!pid || pid === 'N/A') continue
+      const soldPairs = numberOrZero(item.pairs) || (numberOrZero(item.qty) * (item.unitType === 'pairs' ? 1 : 12))
+      if (soldPairs <= 0) continue
+      soldByProduct[pid] = (soldByProduct[pid] || 0) + soldPairs
+    }
+
+    const updates = Object.entries(soldByProduct).map(async ([productId, soldPairs]) => {
+      const current = inventory.find(p => p.id.toString() === productId)
+      if (!current) return
+
+      const currentQty = numberOrZero(current.qty)
+      const newQty = Math.max(0, currentQty - soldPairs)
+
+      const updated = {
+        id: current.id,
+        articleNumber: current.articleNumber || current.model,
+        model: current.model,
+        size: current.size,
+        color: current.color,
+        qty: newQty,
+        price: Number(current.pricePunjab ?? current.price ?? 0),
+        pricePunjab: Number(current.pricePunjab ?? current.price ?? 0),
+        priceSindh: Number(current.priceSindh ?? current.price ?? 0)
+      }
+
+      try {
+        await axios.put(`${API_BASE_URL}/api/products/${current.id}`, updated, { headers })
+      } catch (err) {
+        console.error(`Failed to deduct stock for product ${productId}:`, err)
+      }
+    })
+
+    await Promise.all(updates)
+  }
+
   const handleGenerateMultiItemBill = async (e) => {
     e.preventDefault()
     if (!saleCustomerName || !saleCustomerUniqueId || cartItems.length === 0) return
+
+    // Validate stock availability BEFORE saving
+    for (const row of cartItems) {
+      const prod = inventory.find(p => p.id.toString() === row.productId?.toString())
+      if (!prod) continue
+      const multiplier = row.unitType === 'dozens' ? 12 : 1
+      const pairsRequested = Number(row.qty || 0) * multiplier
+      const available = numberOrZero(prod.qty)
+      if (pairsRequested > available) {
+        alert(`Not enough stock for ${prod.articleNumber || prod.model} (Size: ${prod.size || 'N/A'}).\nAvailable: ${available} pairs\nRequested: ${pairsRequested} pairs`)
+        return
+      }
+    }
 
     let grossTotal = 0;
 
@@ -599,6 +643,10 @@ export default function App() {
     try {
       const response = await axios.post(`${API_BASE_URL}/api/sales`, newRecord, { headers: { Authorization: `Bearer ${token}` } })
       setSales(prevSales => [normalizeSale(response.data), ...prevSales])
+
+      // === Deduct sold stock from inventory in DB ===
+      await deductStockFromInventory(evaluatedItems)
+      await fetchAllData()  // refresh to show updated stock
     } catch (err) {
       console.error('Error saving bill:', err)
       alert('The bill could not be saved to the database.')
@@ -1067,121 +1115,122 @@ export default function App() {
     window.open(whatsappUrl, '_blank');
   };
 
-const handlePrintStockReport = () => {
-  if (inventory.length === 0) {
-    alert('No inventory stock available to print.')
-    return
-  }
+  // === Stock Report Print — DOZENS ONLY, NO PRICES ===
+  const handlePrintStockReport = () => {
+    if (inventory.length === 0) {
+      alert('No inventory stock available to print.')
+      return
+    }
 
-  const printWindow = window.open('', '_blank', 'width=1000,height=800')
-  if (!printWindow) {
-    alert('Please allow pop-ups to print the stock report.')
-    return
-  }
+    const printWindow = window.open('', '_blank', 'width=1000,height=800')
+    if (!printWindow) {
+      alert('Please allow pop-ups to print the stock report.')
+      return
+    }
 
-  // Group inventory by articleNumber for subtotals
-  const grouped = Object.entries(inventoryByArticle).sort(([a], [b]) => a.localeCompare(b))
+    const grouped = Object.entries(inventoryByArticle).sort(([a], [b]) => a.localeCompare(b))
+    const totalDozensAll = stockTotals.totalDozens
 
-  const totalDozensAll = stockTotals.totalDozens
+    let rowIndex = 0
+    const tableRows = grouped.map(([articleNumber, variants]) => {
+      const articlePairs = variants.reduce((acc, v) => acc + numberOrZero(v.qty), 0)
+      const articleDozens = articlePairs / 12
 
-  let rowIndex = 0
-  const tableRows = grouped.map(([articleNumber, variants]) => {
-    const articlePairs = variants.reduce((acc, v) => acc + numberOrZero(v.qty), 0)
-    const articleDozens = articlePairs / 12
-
-    const parentRow = `
-      <tr style="background-color: #ede9fe;">
-        <td colspan="4" style="text-align: right; font-weight: 800; color: #5b21b6;">
-          PARENT ARTICLE: ${articleNumber}
-          <span style="font-weight: 600; color: #6b7280; margin-left: 6px;">(${variants.length} variant${variants.length === 1 ? '' : 's'})</span>
-        </td>
-        <td style="text-align: center; font-weight: 800; color: #5b21b6;">${articleDozens.toFixed(2)} dozens</td>
-      </tr>
-    `
-
-    const variantRows = variants.map(item => {
-      rowIndex += 1
-      const pairs = numberOrZero(item.qty)
-      const dozens = pairs / 12
-
-      return `
-        <tr>
-          <td style="text-align: center;">${rowIndex}</td>
-          <td style="text-align: center;">#${item.id}</td>
-          <td>${item.articleNumber || item.model || 'N/A'}</td>
-          <td style="text-align: center;">${item.size || 'N/A'} | ${item.color || 'N/A'}</td>
-          <td style="text-align: center; font-weight: bold; color: #16a34a;">${dozens.toFixed(2)} dozens</td>
+      const parentRow = `
+        <tr style="background-color: #ede9fe;">
+          <td colspan="4" style="text-align: right; font-weight: 800; color: #5b21b6;">
+            PARENT ARTICLE: ${articleNumber}
+            <span style="font-weight: 600; color: #6b7280; margin-left: 6px;">(${variants.length} variant${variants.length === 1 ? '' : 's'})</span>
+          </td>
+          <td style="text-align: center; font-weight: 800; color: #5b21b6;">${articleDozens.toFixed(2)} dozens</td>
         </tr>
       `
+
+      const variantRows = variants.map(item => {
+        rowIndex += 1
+        const pairs = numberOrZero(item.qty)
+        const dozens = pairs / 12
+
+        return `
+          <tr>
+            <td style="text-align: center;">${rowIndex}</td>
+            <td style="text-align: center;">#${item.id}</td>
+            <td>${item.articleNumber || item.model || 'N/A'}</td>
+            <td style="text-align: center;">${item.size || 'N/A'} | ${item.color || 'N/A'}</td>
+            <td style="text-align: center; font-weight: bold; color: #16a34a;">${dozens.toFixed(2)} dozens</td>
+          </tr>
+        `
+      }).join('')
+
+      return parentRow + variantRows
     }).join('')
 
-    return parentRow + variantRows
-  }).join('')
-
-  printWindow.document.write(`
-    <html>
-      <head>
-        <title>Stock Inventory Report (Dozens)</title>
-        <style>
-          body { font-family: 'Helvetica Neue', Arial, sans-serif; padding: 18px; color: #1e293b; background: #fff; margin: 0; font-size: 11px; }
-          .header { display: flex; justify-content: space-between; border-bottom: 2px solid #714B67; padding-bottom: 12px; margin-bottom: 15px; }
-          .company-name { font-size: 20px; font-weight: 800; text-transform: uppercase; color: #714B67; margin: 0; }
-          table { width: 100%; border-collapse: collapse; margin-top: 12px; }
-          th, td { border: 1px solid #cbd5e1; padding: 6px 8px; font-size: 10.5px; }
-          th { background-color: #f1f5f9; color: #334155; font-weight: 700; text-transform: uppercase; }
-          .summary-box { display: flex; justify-content: space-between; align-items: center; background: #f8fafc; border: 2px solid #714B67; padding: 14px 18px; border-radius: 8px; margin-top: 18px; font-size: 14px; font-weight: bold; page-break-inside: avoid; }
-          .footer { margin-top: 22px; text-align: center; font-size: 10px; color: #94a3b8; border-top: 1px solid #e2e8f0; padding-top: 8px; }
-          @media print { body { padding: 0; } @page { size: A4 portrait; margin: 8mm; } }
-        </style>
-      </head>
-      <body>
-        <div class="header">
-          <div>
-            <h1 class="company-name">PLUS EVR ERP Factory</h1>
-            <div style="color: #64748b;">Comprehensive Stock Report (Dozens Only)</div>
+    printWindow.document.write(`
+      <html>
+        <head>
+          <title>Stock Inventory Report (Dozens)</title>
+          <style>
+            body { font-family: 'Helvetica Neue', Arial, sans-serif; padding: 18px; color: #1e293b; background: #fff; margin: 0; font-size: 11px; }
+            .header { display: flex; justify-content: space-between; border-bottom: 2px solid #714B67; padding-bottom: 12px; margin-bottom: 15px; }
+            .company-name { font-size: 20px; font-weight: 800; text-transform: uppercase; color: #714B67; margin: 0; }
+            table { width: 100%; border-collapse: collapse; margin-top: 12px; }
+            th, td { border: 1px solid #cbd5e1; padding: 6px 8px; font-size: 10.5px; }
+            th { background-color: #f1f5f9; color: #334155; font-weight: 700; text-transform: uppercase; }
+            .summary-box { display: flex; justify-content: space-between; align-items: center; background: #f8fafc; border: 2px solid #714B67; padding: 14px 18px; border-radius: 8px; margin-top: 18px; font-size: 14px; font-weight: bold; page-break-inside: avoid; }
+            .footer { margin-top: 22px; text-align: center; font-size: 10px; color: #94a3b8; border-top: 1px solid #e2e8f0; padding-top: 8px; }
+            @media print { body { padding: 0; } @page { size: A4 portrait; margin: 8mm; } }
+          </style>
+        </head>
+        <body>
+          <div class="header">
+            <div>
+              <h1 class="company-name">PLUS EVR ERP Factory</h1>
+              <div style="color: #64748b;">Comprehensive Stock Report (Dozens Only)</div>
+            </div>
+            <div style="text-align: right; font-size: 11px; line-height: 1.6;">
+              <div><strong>Date:</strong> ${new Date().toISOString().split('T')[0]}</div>
+              <div><strong>Total Articles:</strong> ${grouped.length}</div>
+              <div><strong>Total Variants:</strong> ${inventory.length}</div>
+            </div>
           </div>
-          <div style="text-align: right; font-size: 11px; line-height: 1.6;">
-            <div><strong>Date:</strong> ${new Date().toISOString().split('T')[0]}</div>
-            <div><strong>Total Articles:</strong> ${grouped.length}</div>
-            <div><strong>Total Variants:</strong> ${inventory.length}</div>
+
+          <table>
+            <thead>
+              <tr>
+                <th style="text-align: center; width: 40px;">#</th>
+                <th style="text-align: center; width: 60px;">ID</th>
+                <th style="text-align: left;">Article Number</th>
+                <th style="text-align: center; width: 130px;">Size & Color</th>
+                <th style="text-align: center; width: 180px;">Stock (Dozens)</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${tableRows}
+            </tbody>
+          </table>
+
+          <div class="summary-box">
+            <span>GRAND TOTAL FACTORY STOCK:</span>
+            <span style="color: #16a34a;">${totalDozensAll.toFixed(2)} Dozens</span>
           </div>
-        </div>
 
-        <table>
-          <thead>
-            <tr>
-              <th style="text-align: center; width: 40px;">#</th>
-              <th style="text-align: center; width: 60px;">ID</th>
-              <th style="text-align: left;">Article Number</th>
-              <th style="text-align: center; width: 130px;">Size & Color</th>
-              <th style="text-align: center; width: 180px;">Stock (Dozens)</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${tableRows}
-          </tbody>
-        </table>
+          <div class="footer">
+            <p>Computer-generated stock inventory report from PLUS EVR ERP System.</p>
+          </div>
 
-        <div class="summary-box">
-          <span>GRAND TOTAL FACTORY STOCK:</span>
-          <span style="color: #16a34a;">${totalDozensAll.toFixed(2)} Dozens</span>
-        </div>
+          <script>
+            window.onload = function() {
+              window.print();
+              window.close();
+            };
+          </script>
+        </body>
+      </html>
+    `)
+    printWindow.document.close()
+  }
 
-        <div class="footer">
-          <p>Computer-generated stock inventory report from PLUS EVR ERP System.</p>
-        </div>
-
-        <script>
-          window.onload = function() {
-            window.print();
-            window.close();
-          };
-        </script>
-      </body>
-    </html>
-  `)
-  printWindow.document.close()
-}  const handlePrintCustomerReport = (customer, periodSales, periodPayments, openingApprox, netDue) => {
+  const handlePrintCustomerReport = (customer, periodSales, periodPayments, openingApprox, netDue) => {
     const printWindow = window.open('', '_blank', 'width=800,height=600');
 
     const salesRows = periodSales.length === 0
@@ -1334,7 +1383,6 @@ const handlePrintStockReport = () => {
     { id: 'pwa', label: 'Mobile' }
   ]
 
-  // === Feature 3: Filtered inventory for stock report view ===
   const filteredStockInventory = useMemo(() => {
     const q = stockReportSearch.trim().toLowerCase()
     if (!q) return inventory
@@ -1347,14 +1395,8 @@ const handlePrintStockReport = () => {
   const filteredStockTotals = useMemo(() => {
     const totalPairs = filteredStockInventory.reduce((acc, item) => acc + numberOrZero(item.qty), 0)
     const totalDozens = totalPairs / 12
-    const totalValue = filteredStockInventory.reduce((acc, item) => {
-      const price = stockReportRegion === 'Sindh'
-        ? numberOrZero(item.priceSindh ?? item.price)
-        : numberOrZero(item.pricePunjab ?? item.price)
-      return acc + (numberOrZero(item.qty) * price)
-    }, 0)
-    return { totalPairs, totalDozens, totalValue }
-  }, [filteredStockInventory, stockReportRegion])
+    return { totalPairs, totalDozens }
+  }, [filteredStockInventory])
 
   if (!token) {
     return (
@@ -1540,7 +1582,6 @@ const handlePrintStockReport = () => {
           <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
             <h2 style={{ margin: 0, fontSize: '18px', fontWeight: '700', color: '#1e293b' }}>Stock & Regional Pricing (Stock in Dozens & Pairs)</h2>
 
-            {/* === Feature 2: Stock Totals Summary Bar === */}
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '12px' }}>
               <div style={{ backgroundColor: '#f0fdf4', border: '1px solid #bbf7d0', padding: '16px 18px', borderRadius: '8px' }}>
                 <p style={{ margin: 0, fontSize: '11px', fontWeight: '700', color: '#15803d', letterSpacing: '0.5px' }}>TOTAL STOCK (DOZENS)</p>
@@ -1656,72 +1697,69 @@ const handlePrintStockReport = () => {
           </div>
         )}
 
-       {activeTab === 'stockreport' && (
-  <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
-      <h2 style={{ margin: 0, fontSize: '18px', fontWeight: '700', color: '#1e293b' }}>📦 Stock Inventory Report (Dozens)</h2>
-      <button
-        onClick={handlePrintStockReport}
-        style={{ backgroundColor: '#2563eb', color: '#fff', border: 'none', padding: '10px 18px', borderRadius: '6px', fontWeight: '700', cursor: 'pointer', fontSize: '13px' }}
-      >
-        🖨️ Print / Save Stock Report PDF
-      </button>
-    </div>
+        {activeTab === 'stockreport' && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
+              <h2 style={{ margin: 0, fontSize: '18px', fontWeight: '700', color: '#1e293b' }}>📦 Stock Inventory Report (Dozens)</h2>
+              <button
+                onClick={handlePrintStockReport}
+                style={{ backgroundColor: '#2563eb', color: '#fff', border: 'none', padding: '10px 18px', borderRadius: '6px', fontWeight: '700', cursor: 'pointer', fontSize: '13px' }}
+              >
+                🖨️ Print / Save Stock Report PDF
+              </button>
+            </div>
 
-    <div style={{ backgroundColor: '#ffffff', padding: '24px', borderRadius: '10px', border: '1px solid #e2e8f0', boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}>
-      {/* Filter */}
-      <div style={{ marginBottom: '20px' }}>
-        <input
-          type="text"
-          placeholder="🔍 Filter by article number, size, or color..."
-          value={stockReportSearch}
-          onChange={e => setStockReportSearch(e.target.value)}
-          style={{ width: '100%', padding: '12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '14px', boxSizing: 'border-box' }}
-        />
-      </div>
+            <div style={{ backgroundColor: '#ffffff', padding: '24px', borderRadius: '10px', border: '1px solid #e2e8f0', boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}>
+              <div style={{ marginBottom: '20px' }}>
+                <input
+                  type="text"
+                  placeholder="🔍 Filter by article number, size, or color..."
+                  value={stockReportSearch}
+                  onChange={e => setStockReportSearch(e.target.value)}
+                  style={{ width: '100%', padding: '12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '14px', boxSizing: 'border-box' }}
+                />
+              </div>
 
-      {/* Grand Total Dozens */}
-      <div style={{ backgroundColor: '#f0fdf4', border: '1px solid #bbf7d0', padding: '18px', borderRadius: '8px', marginBottom: '25px', maxWidth: '360px' }}>
-        <p style={{ margin: '0 0 5px 0', fontSize: '12px', fontWeight: '700', color: '#15803d' }}>GRAND TOTAL FACTORY STOCK</p>
-        <p style={{ margin: 0, fontSize: '24px', fontWeight: '800', color: '#16a34a' }}>
-          {filteredStockTotals.totalDozens.toFixed(2)} Dozens
-        </p>
-      </div>
+              <div style={{ backgroundColor: '#f0fdf4', border: '1px solid #bbf7d0', padding: '18px', borderRadius: '8px', marginBottom: '25px', maxWidth: '360px' }}>
+                <p style={{ margin: '0 0 5px 0', fontSize: '12px', fontWeight: '700', color: '#15803d' }}>GRAND TOTAL FACTORY STOCK</p>
+                <p style={{ margin: 0, fontSize: '24px', fontWeight: '800', color: '#16a34a' }}>
+                  {filteredStockTotals.totalDozens.toFixed(2)} Dozens
+                </p>
+              </div>
 
-      {/* Table: no prices, dozens only */}
-      <div style={{ overflowX: 'auto' }}>
-        <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', minWidth: '600px' }}>
-          <thead>
-            <tr style={{ backgroundColor: '#f1f5f9', borderBottom: '1px solid #e2e8f0', fontSize: '12px', color: '#475569', textTransform: 'uppercase' }}>
-              <th style={{ padding: '12px' }}>ID</th>
-              <th style={{ padding: '12px' }}>Article Number</th>
-              <th style={{ padding: '12px' }}>Size & Color</th>
-              <th style={{ padding: '12px' }}>Stock (Dozens)</th>
-            </tr>
-          </thead>
-          <tbody>
-            {filteredStockInventory.length === 0 ? (
-              <tr><td colSpan="4" style={{ padding: '20px', textAlign: 'center', color: '#94a3b8' }}>No inventory stock matches the filter.</td></tr>
-            ) : (
-              filteredStockInventory.map(item => {
-                const pairs = Number(item.qty || 0);
-                const dozens = (pairs / 12).toFixed(2);
-                return (
-                  <tr key={item.id} style={{ borderBottom: '1px solid #f1f5f9', fontSize: '14px' }}>
-                    <td style={{ padding: '12px', fontWeight: '700', color: '#714B67' }}>#{item.id}</td>
-                    <td style={{ padding: '12px', fontWeight: '700', color: '#0f172a' }}>{item.articleNumber || item.model}</td>
-                    <td style={{ padding: '12px', color: '#475569' }}>{item.size || 'N/A'} | {item.color || 'N/A'}</td>
-                    <td style={{ padding: '12px', fontWeight: '800', color: '#16a34a' }}>{dozens} Dozens</td>
-                  </tr>
-                );
-              })
-            )}
-          </tbody>
-        </table>
-      </div>
-    </div>
-  </div>
-)}
+              <div style={{ overflowX: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', minWidth: '600px' }}>
+                  <thead>
+                    <tr style={{ backgroundColor: '#f1f5f9', borderBottom: '1px solid #e2e8f0', fontSize: '12px', color: '#475569', textTransform: 'uppercase' }}>
+                      <th style={{ padding: '12px' }}>ID</th>
+                      <th style={{ padding: '12px' }}>Article Number</th>
+                      <th style={{ padding: '12px' }}>Size & Color</th>
+                      <th style={{ padding: '12px' }}>Stock (Dozens)</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filteredStockInventory.length === 0 ? (
+                      <tr><td colSpan="4" style={{ padding: '20px', textAlign: 'center', color: '#94a3b8' }}>No inventory stock matches the filter.</td></tr>
+                    ) : (
+                      filteredStockInventory.map(item => {
+                        const pairs = Number(item.qty || 0);
+                        const dozens = (pairs / 12).toFixed(2);
+                        return (
+                          <tr key={item.id} style={{ borderBottom: '1px solid #f1f5f9', fontSize: '14px' }}>
+                            <td style={{ padding: '12px', fontWeight: '700', color: '#714B67' }}>#{item.id}</td>
+                            <td style={{ padding: '12px', fontWeight: '700', color: '#0f172a' }}>{item.articleNumber || item.model}</td>
+                            <td style={{ padding: '12px', color: '#475569' }}>{item.size || 'N/A'} | {item.color || 'N/A'}</td>
+                            <td style={{ padding: '12px', fontWeight: '800', color: '#16a34a' }}>{dozens} Dozens</td>
+                          </tr>
+                        );
+                      })
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        )}
 
         {activeTab === 'search' && (
           <div style={{ maxWidth: '700px', margin: '30px auto', backgroundColor: '#ffffff', padding: '30px', borderRadius: '12px', border: '1px solid #e2e8f0', boxShadow: '0 4px 6px rgba(0,0,0,0.05)' }}>
@@ -2147,8 +2185,7 @@ const handlePrintStockReport = () => {
                           const p = getProductPrice(prod, newReg)
                           return { ...item, price: p }
                         }
-                        return item
-                      })
+                        return item                      })
                       setCartItems(updatedCart)
                     }}
                     style={{ padding: '10px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '14px', backgroundColor: '#fff', color: '#0f172a', width: '100%', boxSizing: 'border-box' }}
@@ -2199,7 +2236,7 @@ const handlePrintStockReport = () => {
                       <option value="">-- Select Article No & ID --</option>
                       {inventory.map(p => (
                         <option key={p.id} value={p.id.toString()}>
-                          ID: #{p.id} | Article: {p.articleNumber || p.model} | {p.model} (Size: {p.size || 'N/A'}{p.color ? `, ${p.color}` : ''})
+                          ID: #{p.id} | Article: {p.articleNumber || p.model} | {p.model} (Size: {p.size || 'N/A'}{p.color ? `, ${p.color}` : ''}) — Stock: {p.qty || 0} pairs
                         </option>
                       ))}
                     </select>
@@ -2353,8 +2390,6 @@ const handlePrintStockReport = () => {
                         </td>
                         <td style={{ padding: '14px', textAlign: 'center' }}>
                           <div style={{ display: 'flex', gap: '6px', justifyContent: 'center', flexWrap: 'wrap' }}>
-                           
-
                             <button
                               onClick={() => handleViewPdfBill(s)}
                               style={{ backgroundColor: '#0f766e', color: '#fff', border: 'none', padding: '6px 10px', borderRadius: '6px', cursor: 'pointer', fontWeight: '600', fontSize: '12px' }}
@@ -2567,202 +2602,6 @@ const handlePrintStockReport = () => {
           </div>
         )}
       </main>
-
-      {/* === Feature 1: View Bill Modal Overlay (Enhanced) === */}
-      {selectedBill && (
-        <div
-          style={{
-            position: 'fixed',
-            inset: 0,
-            backgroundColor: 'rgba(0,0,0,0.6)',
-            display: 'flex',
-            justifyContent: 'center',
-            alignItems: 'center',
-            zIndex: 9999,
-            padding: '20px'
-          }}
-          onClick={closeBillModal}
-        >
-          <div
-            style={{
-              backgroundColor: '#fff',
-              width: '100%',
-              maxWidth: '950px',
-              maxHeight: '92vh',
-              overflowY: 'auto',
-              borderRadius: '12px',
-              padding: '28px',
-              position: 'relative',
-              boxShadow: '0 10px 40px rgba(0,0,0,0.25)'
-            }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <button
-              onClick={closeBillModal}
-              style={{
-                position: 'absolute',
-                right: '15px',
-                top: '15px',
-                border: 'none',
-                background: '#ef4444',
-                color: '#fff',
-                width: '34px',
-                height: '34px',
-                borderRadius: '50%',
-                cursor: 'pointer',
-                fontSize: '20px',
-                fontWeight: '700',
-                lineHeight: 1
-              }}
-              aria-label="Close bill preview"
-            >
-              ×
-            </button>
-
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px', flexWrap: 'wrap', gap: '12px', paddingRight: '40px' }}>
-              <div>
-                <h2 style={{ margin: 0, color: '#714B67', fontSize: '20px', fontWeight: '800' }}>
-                  Invoice: {getInvoiceNumber(selectedBill)}
-                </h2>
-                <p style={{ margin: '4px 0 0 0', fontSize: '12px', color: '#64748b' }}>
-                  Bill ID #{selectedBill.id} | Region: {selectedBill.region || 'Punjab'}
-                </p>
-              </div>
-              <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-                <button
-                  onClick={() => handlePrintBill(selectedBill)}
-                  style={{ backgroundColor: '#2563eb', color: '#fff', border: 'none', padding: '8px 14px', borderRadius: '6px', cursor: 'pointer', fontWeight: '700', fontSize: '13px' }}
-                >
-                  🖨️ Print / Save PDF
-                </button>
-                <button
-                  onClick={() => handleViewPdfBill(selectedBill)}
-                  style={{ backgroundColor: '#0f766e', color: '#fff', border: 'none', padding: '8px 14px', borderRadius: '6px', cursor: 'pointer', fontWeight: '700', fontSize: '13px' }}
-                >
-                  📄 View PDF Bill
-                </button>
-                <button
-                  onClick={() => handleSendWhatsAppBill(selectedBill)}
-                  style={{ backgroundColor: '#16a34a', color: '#fff', border: 'none', padding: '8px 14px', borderRadius: '6px', cursor: 'pointer', fontWeight: '700', fontSize: '13px' }}
-                >
-                  💬 WhatsApp
-                </button>
-              </div>
-            </div>
-
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '12px', backgroundColor: '#f8fafc', border: '1px solid #e2e8f0', padding: '14px 16px', borderRadius: '8px', marginBottom: '18px', fontSize: '13px' }}>
-              <div>
-                <div style={{ fontSize: '11px', color: '#64748b', fontWeight: '700', textTransform: 'uppercase', marginBottom: '3px' }}>Customer</div>
-                <div style={{ fontWeight: '800', color: '#0f172a' }}>{selectedBill.customer}</div>
-                <div style={{ fontSize: '12px', color: '#2563eb', fontWeight: '600' }}>ID: {selectedBill.customerId || 'N/A'}</div>
-              </div>
-              <div>
-                <div style={{ fontSize: '11px', color: '#64748b', fontWeight: '700', textTransform: 'uppercase', marginBottom: '3px' }}>Date</div>
-                <div style={{ fontWeight: '700', color: '#0f172a' }}>{selectedBill.date}</div>
-              </div>
-              <div>
-                <div style={{ fontSize: '11px', color: '#64748b', fontWeight: '700', textTransform: 'uppercase', marginBottom: '3px' }}>Transport</div>
-                <div style={{ fontWeight: '700', color: '#0f172a' }}>{selectedBill.transportCompany || 'N/A'}</div>
-              </div>
-              <div>
-                <div style={{ fontSize: '11px', color: '#64748b', fontWeight: '700', textTransform: 'uppercase', marginBottom: '3px' }}>Builty No</div>
-                <div style={{ fontWeight: '700', color: '#0f172a' }}>{selectedBill.builtyNo || 'N/A'}</div>
-              </div>
-            </div>
-
-            <div style={{ overflowX: 'auto', border: '1px solid #e2e8f0', borderRadius: '8px' }}>
-              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
-                <thead>
-                  <tr style={{ backgroundColor: '#f1f5f9', color: '#334155' }}>
-                    <th style={{ padding: '10px', textAlign: 'center', borderBottom: '1px solid #e2e8f0' }}>#</th>
-                    <th style={{ padding: '10px', textAlign: 'left', borderBottom: '1px solid #e2e8f0' }}>Item</th>
-                    <th style={{ padding: '10px', textAlign: 'center', borderBottom: '1px solid #e2e8f0' }}>Quantity</th>
-                    <th style={{ padding: '10px', textAlign: 'right', borderBottom: '1px solid #e2e8f0' }}>Rate / Pair</th>
-                    <th style={{ padding: '10px', textAlign: 'right', borderBottom: '1px solid #e2e8f0' }}>Line Total</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {(selectedBill.lineItems || []).length === 0 ? (
-                    <tr>
-                      <td colSpan="5" style={{ padding: '20px', textAlign: 'center', color: '#94a3b8' }}>
-                        No line items found for this bill.
-                      </td>
-                    </tr>
-                  ) : (
-                    (selectedBill.lineItems || []).map((item, index) => {
-                      const pairs = numberOrZero(item.pairs) || (numberOrZero(item.qty) * (item.unitType === 'pairs' ? 1 : 12))
-                      const dozens = pairs / 12
-                      const lineTotal = numberOrZero(item.grossAmount) || (pairs * numberOrZero(item.price))
-                      return (
-                        <tr key={index} style={{ borderBottom: '1px solid #f1f5f9' }}>
-                          <td style={{ padding: '10px', textAlign: 'center', color: '#64748b' }}>{index + 1}</td>
-                          <td style={{ padding: '10px' }}>
-                            <div style={{ fontWeight: '700', color: '#0f172a' }}>
-                              {item.model || item.productName || item.description || 'Item'}
-                            </div>
-                            <div style={{ fontSize: '11px', color: '#64748b' }}>
-                              Article: #{item.productId || 'N/A'} | Size: {item.size || 'N/A'}
-                            </div>
-                          </td>
-                          <td style={{ padding: '10px', textAlign: 'center' }}>
-                            <div style={{ fontWeight: '700', color: '#16a34a' }}>{dozens.toFixed(2)} dozens</div>
-                            <div style={{ fontSize: '11px', color: '#64748b' }}>({pairs} pairs)</div>
-                          </td>
-                          <td style={{ padding: '10px', textAlign: 'right', fontWeight: '600' }}>
-                            Rs. {numberOrZero(item.price).toLocaleString()}
-                          </td>
-                          <td style={{ padding: '10px', textAlign: 'right', fontWeight: '800', color: '#2563eb' }}>
-                            Rs. {lineTotal.toLocaleString()}
-                          </td>
-                        </tr>
-                      )
-                    })
-                  )}
-                </tbody>
-              </table>
-            </div>
-
-            {(() => {
-              const billItems = selectedBill.lineItems || []
-              const totalPairs = billItems.reduce((acc, item) => {
-                const pairs = numberOrZero(item.pairs) || (numberOrZero(item.qty) * (item.unitType === 'pairs' ? 1 : 12))
-                return acc + pairs
-              }, 0)
-              const totalDozens = totalPairs / 12
-              const grossTotal = numberOrZero(selectedBill.rawTotal || selectedBill.total)
-              const discount = numberOrZero(selectedBill.discount)
-              const netTotal = numberOrZero(selectedBill.total)
-
-              return (
-                <div style={{ marginTop: '20px', display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: '16px' }}>
-                  <div style={{ backgroundColor: '#f0fdf4', border: '1px solid #bbf7d0', padding: '14px 16px', borderRadius: '8px' }}>
-                    <div style={{ fontSize: '11px', fontWeight: '700', color: '#15803d', textTransform: 'uppercase', marginBottom: '6px' }}>Total Quantity</div>
-                    <div style={{ fontSize: '20px', fontWeight: '800', color: '#16a34a' }}>{totalDozens.toFixed(2)} Dozens</div>
-                    <div style={{ fontSize: '12px', color: '#64748b' }}>({totalPairs.toLocaleString()} pairs)</div>
-                  </div>
-                  <div style={{ backgroundColor: '#f8fafc', border: '1px solid #e2e8f0', padding: '14px 16px', borderRadius: '8px' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px', fontSize: '13px' }}>
-                      <span style={{ color: '#64748b', fontWeight: '600' }}>Bill Rate Total:</span>
-                      <span style={{ fontWeight: '700', color: '#0f172a' }}>Rs. {grossTotal.toLocaleString()}</span>
-                    </div>
-                    {discount > 0 && (
-                      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px', fontSize: '13px' }}>
-                        <span style={{ color: '#dc2626', fontWeight: '600' }}>Discount:</span>
-                        <span style={{ fontWeight: '700', color: '#dc2626' }}>- Rs. {discount.toLocaleString()}</span>
-                      </div>
-                    )}
-                    <div style={{ display: 'flex', justifyContent: 'space-between', borderTop: '1px solid #cbd5e1', paddingTop: '8px', marginTop: '4px' }}>
-                      <span style={{ fontWeight: '800', color: '#1e293b' }}>Net Payable:</span>
-                      <span style={{ fontWeight: '800', color: '#16a34a', fontSize: '16px' }}>Rs. {netTotal.toLocaleString()}</span>
-                    </div>
-                  </div>
-                </div>
-              )
-            })()}
-          </div>
-        </div>
-      )}
     </div>
   )
 }
-// force rebuild 09/18/2026 05:54:52
