@@ -142,7 +142,9 @@ export default function App() {
   const [workers, setWorkers] = useState([])
   const [wagePayments, setWagePayments] = useState([])
 
-  // Legacy browser records are retained only long enough to migrate them to the API.
+  // --- VIEW BILL MODAL STATE ---
+  const [viewingBill, setViewingBill] = useState(null)
+
   const [sales, setSales] = useState(() => {
     try {
       const saved = localStorage.getItem('factory_sales')
@@ -160,7 +162,6 @@ export default function App() {
     }
   })
 
-  // Legacy browser payments are migrated to the API on the first authenticated load.
   const [payments, setPayments] = useState(() => {
     try {
       const saved = localStorage.getItem('factory_payments')
@@ -194,7 +195,6 @@ export default function App() {
   const [transportCompany, setTransportCompany] = useState('')
   const [builtyNo, setBuiltyNo] = useState('')
   
-  // Cart items use the product's original bill rate. Discounts are applied later.
   const [cartItems, setCartItems] = useState([
     { productId: '', model: '', size: '', qty: '', unitType: 'dozens', price: '' }
   ])
@@ -213,12 +213,10 @@ export default function App() {
     new Date().toISOString().split('T')[0]
   );
 
-  // Helper to generate a random unique customer ID string
   const generateCustomerId = () => {
     return 'CUST-' + Math.floor(1000 + Math.random() * 9000);
   }
 
-  // Fetch all live data on mount (if authenticated)
   useEffect(() => {
     if (token) {
       fetchAllData()
@@ -305,7 +303,6 @@ export default function App() {
     setUsername(null)
   }
 
-  // --- IF NOT LOGGED IN, SHOW LOGIN SCREEN ---
   if (!token) {
     return (
       <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh', backgroundColor: '#f8fafc', fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif' }}>
@@ -357,7 +354,6 @@ export default function App() {
     return groups
   }, {})
 
-  // --- CALCULATE TOTAL MARKET DUES (OUTSTANDING RECEIVABLES) ---
   const totalMarketDues = customers.reduce((acc, c) => {
     const customerBills = sales.filter(s => s.customerId === c.phone);
     const customerPayments = payments.filter(p => p.customerId === c.phone || p.customer === c.name);
@@ -930,12 +926,9 @@ export default function App() {
     handlePrintAllBills(selectedBills)
   }
 
-  // --- OPEN PDF INVOICE AND WHATSAPP SIMULTANEOUSLY ---
   const handleSendWhatsAppBill = (saleRecord) => {
-    // 1. Open the print/PDF window
     handlePrintBill(saleRecord);
 
-    // 2. Open WhatsApp with notification message
     const matchedCustomer = customers.find(c => c.phone === saleRecord.customerId || c.name === saleRecord.customer);
     const customerPhone = matchedCustomer?.whatsapp || '';
 
@@ -957,7 +950,6 @@ export default function App() {
     window.open(whatsappUrl, '_blank');
   };
 
-  // --- CUSTOMER REPORT GENERATOR FUNCTIONS (URDU + ENGLISH) ---
   const handlePrintCustomerReport = (customer, periodSales, periodPayments, openingApprox, netDue) => {
     const printWindow = window.open('', '_blank', 'width=800,height=600');
 
@@ -1673,7 +1665,7 @@ export default function App() {
           </div>
         )}
 
-        {/* MULTI-ITEM BILLING WITH CUSTOMER DROPDOWN & TRANSPORT & ITEM-LEVEL DISCOUNTS */}
+        {/* MULTI-ITEM BILLING WITH VIEW BILL BUTTON */}
         {activeTab === 'sales' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
@@ -1985,19 +1977,27 @@ export default function App() {
                                 Save
                               </button>
                             ) : (
-                              <button 
-                                onClick={() => {
-                                  setEditingSaleId(s.id);
-                                  setEditSaleInputs({
-                                    transportCompany: s.transportCompany || '',
-                                    builtyNo: s.builtyNo || '',
-                                    discountPerPair: Object.fromEntries((s.lineItems || []).map((item, index) => [index, item.discountPerPair || 0]))
-                                  });
-                                }}
-                                style={{ backgroundColor: '#64748b', color: '#fff', border: 'none', padding: '6px 10px', borderRadius: '6px', cursor: 'pointer', fontWeight: '600', fontSize: '12px' }}
-                              >
-                                Edit Bill Details
-                              </button>
+                              <>
+                                <button 
+                                  onClick={() => setViewingBill(s)}
+                                  style={{ backgroundColor: '#475569', color: '#fff', border: 'none', padding: '6px 10px', borderRadius: '6px', cursor: 'pointer', fontWeight: '600', fontSize: '12px' }}
+                                >
+                                  View Bill
+                                </button>
+                                <button 
+                                  onClick={() => {
+                                    setEditingSaleId(s.id);
+                                    setEditSaleInputs({
+                                      transportCompany: s.transportCompany || '',
+                                      builtyNo: s.builtyNo || '',
+                                      discountPerPair: Object.fromEntries((s.lineItems || []).map((item, index) => [index, item.discountPerPair || 0]))
+                                    });
+                                  }}
+                                  style={{ backgroundColor: '#64748b', color: '#fff', border: 'none', padding: '6px 10px', borderRadius: '6px', cursor: 'pointer', fontWeight: '600', fontSize: '12px' }}
+                                >
+                                  Edit Bill Details
+                                </button>
+                              </>
                             )}
                             <button 
                               onClick={() => handlePrintBill(s)}
@@ -2053,16 +2053,6 @@ export default function App() {
                 </tbody>
               </table>
             </div>
-            <div style={{ backgroundColor: '#ffffff', padding: '16px', borderRadius: '10px', border: '1px solid #e2e8f0' }}>
-              <h3 style={{ margin: '0 0 12px 0', fontSize: '15px', color: '#1e293b' }}>Total Given To Each Worker</h3>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '10px' }}>
-                {workers.map(worker => {
-                  const total = wagePayments.filter(payment => payment.workerId === worker.id).reduce((sum, payment) => sum + Number(payment.amount || 0), 0)
-                  return <div key={worker.id} style={{ backgroundColor: '#f8fafc', padding: '12px', borderRadius: '6px', border: '1px solid #e2e8f0' }}><strong>{worker.name}</strong><br /><span style={{ color: '#dc2626', fontWeight: '700' }}>Rs. {total.toLocaleString()}</span></div>
-                })}
-              </div>
-            </div>
-            <div style={{ backgroundColor: '#fff7ed', padding: '16px', borderRadius: '8px', border: '1px solid #fed7aa', fontWeight: '700' }}>Total wages paid: Rs. {wagePayments.reduce((total, payment) => total + Number(payment.amount || 0), 0).toLocaleString()}</div>
           </div>
         )}
 
@@ -2194,6 +2184,83 @@ export default function App() {
           </div>
         )}
       </main>
+
+      {/* VIEW BILL MODAL POPUP */}
+      {viewingBill && (
+        <div style={{ position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 2000, padding: '20px', boxSizing: 'border-box' }}>
+          <div style={{ backgroundColor: '#fff', padding: '30px', borderRadius: '12px', width: '100%', maxWidth: '650px', maxHeight: '90vh', overflowY: 'auto', boxShadow: '0 10px 25px rgba(0,0,0,0.2)' }}>
+            
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '2px solid #714B67', paddingBottom: '15px', marginBottom: '20px' }}>
+              <div>
+                <h3 style={{ margin: '0 0 5px 0', color: '#714B67', fontSize: '18px', fontWeight: '800' }}>PLUS EVR ERP Factory</h3>
+                <span style={{ fontSize: '13px', color: '#64748b' }}>Wholesale Invoice #{getInvoiceNumber(viewingBill)}</span>
+              </div>
+              <button 
+                onClick={() => setViewingBill(null)}
+                style={{ backgroundColor: '#dc2626', color: '#fff', border: 'none', width: '32px', height: '32px', borderRadius: '50%', cursor: 'pointer', fontWeight: 'bold', fontSize: '14px' }}
+              >
+                ✕
+              </button>
+            </div>
+
+            <div style={{ fontSize: '14px', lineHeight: '1.6', marginBottom: '20px', color: '#334155', backgroundColor: '#f8fafc', padding: '15px', borderRadius: '8px', border: '1px solid #e2e8f0' }}>
+              <p style={{ margin: '3px 0' }}><strong>Date:</strong> {viewingBill.date}</p>
+              <p style={{ margin: '3px 0' }}><strong>Customer ID:</strong> {viewingBill.customerId || 'N/A'}</p>
+              <p style={{ margin: '3px 0' }}><strong>Customer Name:</strong> {viewingBill.customer}</p>
+              <p style={{ margin: '3px 0' }}><strong>Region:</strong> {viewingBill.region || 'Punjab'}</p>
+              <p style={{ margin: '3px 0' }}><strong>Transport:</strong> {viewingBill.transportCompany || 'N/A'} | <strong>Builty No:</strong> {viewingBill.builtyNo || 'N/A'}</p>
+            </div>
+
+            <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: '20px' }}>
+              <thead>
+                <tr style={{ backgroundColor: '#f1f5f9', color: '#475569', fontSize: '12px', textTransform: 'uppercase' }}>
+                  <th style={{ padding: '10px', border: '1px solid #cbd5e1', textAlign: 'left' }}>Description / Line Items</th>
+                  <th style={{ padding: '10px', border: '1px solid #cbd5e1', textAlign: 'right' }}>Gross Amount</th>
+                </tr>
+              </thead>
+              <tbody>
+                {viewingBill.lineItems ? viewingBill.lineItems.map((item, idx) => (
+                  <tr key={idx} style={{ fontSize: '13px' }}>
+                    <td style={{ padding: '10px', border: '1px solid #cbd5e1' }}>{item.description}</td>
+                    <td style={{ padding: '10px', border: '1px solid #cbd5e1', textAlign: 'right' }}>Rs. {numberOrZero(item.grossAmount || item.netAmount).toLocaleString()}</td>
+                  </tr>
+                )) : (
+                  <tr>
+                    <td style={{ padding: '10px', border: '1px solid #cbd5e1' }}>{viewingBill.items || 'General Wholesale Order'}</td>
+                    <td style={{ padding: '10px', border: '1px solid #cbd5e1', textAlign: 'right' }}>Rs. {(numberOrZero(viewingBill.rawTotal || viewingBill.total)).toLocaleString()}</td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+
+            <div style={{ textAlign: 'right', fontSize: '14px', lineHeight: '1.6', marginBottom: '25px', color: '#1e293b' }}>
+              <p style={{ margin: '4px 0' }}>Bill Rate Total: Rs. {(numberOrZero(viewingBill.rawTotal || viewingBill.total)).toLocaleString()}</p>
+              {numberOrZero(viewingBill.discount) > 0 && (
+                <p style={{ margin: '4px 0', color: '#dc2626' }}>Discount Applied: - Rs. {numberOrZero(viewingBill.discount).toLocaleString()}</p>
+              )}
+              <hr style={{ border: '0', borderTop: '1px solid #cbd5e1', margin: '8px 0 8px auto', width: '240px' }} />
+              <p style={{ fontSize: '17px', fontWeight: '800', color: '#16a34a', margin: '4px 0' }}>Net Payable: Rs. {numberOrZero(viewingBill.total).toLocaleString()}</p>
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', borderTop: '1px solid #e2e8f0', paddingTop: '15px' }}>
+              <button 
+                onClick={() => handlePrintBill(viewingBill)}
+                style={{ backgroundColor: '#2563eb', color: '#fff', border: 'none', padding: '10px 20px', borderRadius: '6px', fontWeight: '700', cursor: 'pointer', fontSize: '13px' }}
+              >
+                🖨️ Print / PDF
+              </button>
+              <button 
+                onClick={() => setViewingBill(null)}
+                style={{ backgroundColor: '#64748b', color: '#fff', border: 'none', padding: '10px 20px', borderRadius: '6px', fontWeight: '700', cursor: 'pointer', fontSize: '13px' }}
+              >
+                Close
+              </button>
+            </div>
+
+          </div>
+        </div>
+      )}
+
     </div>
   )
 }
