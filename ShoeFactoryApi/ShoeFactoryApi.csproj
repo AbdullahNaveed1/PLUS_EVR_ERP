@@ -19,17 +19,5 @@
     <PackageReference Include="Swashbuckle.AspNetCore" Version="6.6.2" />
     <PackageReference Include="System.IdentityModel.Tokens.Jwt" Version="8.0.11" />
   </ItemGroup>
-<Target Name="PublishRunWebpack" AfterTargets="ComputeFilesToPublish">
-  <!-- Run npm install and build in the root folder -->
-  <Exec WorkingDirectory="../" Command="npm install" />
-  <Exec WorkingDirectory="../" Command="npm run build" />
-  
-  <!-- Copy Vite build output into wwwroot for .NET to serve -->
-  <ItemGroup>
-    <ResolvedFileToPublish Include="../dist/**/*" Exclude="@(ResolvedFileToPublish)">
-      <RelativePath>wwwroot\%(RecursiveDir)%(Filename)%(Extension)</RelativePath>
-      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
-    </ResolvedFileToPublish>
-  </ItemGroup>
-</Target>
+
 </Project>
