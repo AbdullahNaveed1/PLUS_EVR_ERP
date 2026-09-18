@@ -124,17 +124,14 @@ const normalizeSale = sale => {
 }
 
 export default function App() {
-  // --- AUTHENTICATION STATE ---
   const [token, setToken] = useState(() => localStorage.getItem('token'))
   const [role, setRole] = useState(() => localStorage.getItem('role'))
   const [username, setUsername] = useState(() => localStorage.getItem('username'))
 
-  // Login form state
   const [loginForm, setLoginForm] = useState({ username: '', password: '' })
   const [loginError, setLoginError] = useState('')
   const [activeTab, setActiveTab] = useState('dashboard')
 
-  // --- LIVE BACKEND DATA STATES ---
   const [inventory, setInventory] = useState([])
   const [customers, setCustomers] = useState([])
   const [expenses, setExpenses] = useState([])
@@ -142,7 +139,6 @@ export default function App() {
   const [workers, setWorkers] = useState([])
   const [wagePayments, setWagePayments] = useState([])
 
-  // Legacy browser records are retained only long enough to migrate them to the API.
   const [sales, setSales] = useState(() => {
     try {
       const saved = localStorage.getItem('factory_sales')
@@ -160,7 +156,6 @@ export default function App() {
     }
   })
 
-  // Legacy browser payments are migrated to the API on the first authenticated load.
   const [payments, setPayments] = useState(() => {
     try {
       const saved = localStorage.getItem('factory_payments')
@@ -172,13 +167,11 @@ export default function App() {
 
   const [loading, setLoading] = useState(false)
 
-  // --- FORM STATES ---
   const [newItem, setNewItem] = useState({ articleNumber: '', model: '', size: '', color: '', qty: '', pricePunjab: '', priceSindh: '' })
   const [newCust, setNewCust] = useState({ name: '', description: null, region: 'Punjab', balance: '' })
   const [newExp, setNewExp] = useState({ category: '', amount: '', notes: '', date: new Date().toISOString().split('T')[0] })
   const [newTour, setNewTour] = useState({ rep: '', region: '', cost: '', ordersValue: '', date: new Date().toISOString().split('T')[0] })
 
-  // --- INLINE PAYMENT & UPDATE INVENTORY STATES ---
   const [paymentInputs, setPaymentInputs] = useState({})
   const [updateStockInputs, setUpdateStockInputs] = useState({})
   const [updatePriceInputs, setUpdatePriceInputs] = useState({})
@@ -186,7 +179,6 @@ export default function App() {
   const [newWorker, setNewWorker] = useState({ name: '', phone: '', role: '' })
   const [newWagePayment, setNewWagePayment] = useState({ workerId: '', amount: '', paymentDate: new Date().toISOString().split('T')[0], notes: '' })
 
-  // --- MULTI-ITEM CART BILLING STATES ---
   const [selectedCustomerId, setSelectedCustomerId] = useState('')
   const [saleCustomerName, setSaleCustomerName] = useState('')
   const [saleCustomerUniqueId, setSaleCustomerUniqueId] = useState('')
@@ -194,17 +186,14 @@ export default function App() {
   const [transportCompany, setTransportCompany] = useState('')
   const [builtyNo, setBuiltyNo] = useState('')
   
-  // Cart items use the product's original bill rate. Discounts are applied later.
   const [cartItems, setCartItems] = useState([
     { productId: '', model: '', size: '', qty: '', unitType: 'dozens', price: '' }
   ])
 
-  // --- EDITING OLDER BILLS DETAILS STATE ---
   const [editingSaleId, setEditingSaleId] = useState(null)
   const [editSaleInputs, setEditSaleInputs] = useState({ transportCompany: '', builtyNo: '', discountPerPair: {} })
   const [selectedSaleIds, setSelectedSaleIds] = useState([])
 
-  // --- CUSTOMER REPORT STATES ---
   const [reportCustId, setReportCustId] = useState('');
   const [reportStartDate, setReportStartDate] = useState(
     new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]
@@ -213,12 +202,10 @@ export default function App() {
     new Date().toISOString().split('T')[0]
   );
 
-  // Helper to generate a random unique customer ID string
   const generateCustomerId = () => {
     return 'CUST-' + Math.floor(1000 + Math.random() * 9000);
   }
 
-  // Fetch all live data on mount (if authenticated)
   useEffect(() => {
     if (token) {
       fetchAllData()
@@ -305,7 +292,6 @@ export default function App() {
     setUsername(null)
   }
 
-  // --- IF NOT LOGGED IN, SHOW LOGIN SCREEN ---
   if (!token) {
     return (
       <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh', backgroundColor: '#f8fafc', fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif' }}>
@@ -357,7 +343,6 @@ export default function App() {
     return groups
   }, {})
 
-  // --- CALCULATE TOTAL MARKET DUES (OUTSTANDING RECEIVABLES) ---
   const totalMarketDues = customers.reduce((acc, c) => {
     const customerBills = sales.filter(s => s.customerId === c.phone);
     const customerPayments = payments.filter(p => p.customerId === c.phone || p.customer === c.name);
@@ -921,9 +906,9 @@ export default function App() {
             th, td { border: 1px solid #cbd5e1; padding: 6px; font-size: 10px; line-height: 1.15; }
             th { background-color: #f1f5f9; color: #334155; font-weight: 700; text-transform: uppercase; font-size: 11px; }
             .total-section { width: 250px; margin-left: auto; background: #f8fafc; border: 1px solid #e2e8f0; padding: 7px 9px; border-radius: 4px; font-size: 11px; }
-            .total-row { display: flex; justify-content: space-between; margin-bottom: 3px; }
+            .total-row { display: flex; justifyContent: space-between; margin-bottom: 3px; }
             .net-amount { font-size: 13px; font-weight: 800; color: #16a34a; border-top: 1px solid #cbd5e1; padding-top: 4px; margin-top: 4px; }
-            .signature-section { margin-top: 18px; display: flex; justify-content: space-between; font-size: 10px; color: #475569; }
+            .signature-section { margin-top: 18px; display: flex; justifyContent: space-between; font-size: 10px; color: #475569; }
             .sig-line { width: 160px; border-top: 1px solid #94a3b8; text-align: center; padding-top: 4px; }
             .footer { margin-top: 10px; text-align: center; font-size: 9px; color: #94a3b8; border-top: 1px solid #e2e8f0; padding-top: 4px; }
             .print-btn { display: block; width: 100%; max-width: 200px; margin: 20px auto 0 auto; background: #714B67; color: white; border: none; padding: 10px; border-radius: 6px; font-weight: bold; cursor: pointer; text-align: center; }
@@ -987,8 +972,8 @@ export default function App() {
           <button class="print-btn" onclick="window.print()">Print / Save PDF</button>
         </body>
       </html>
-    `);
-    printWindow.document.close();
+    `)
+    printWindow.document.close()
   }
 
   const handlePrintAllBills = (billsToPrint = sales) => {
@@ -1023,7 +1008,7 @@ export default function App() {
         body { font-family: Arial, sans-serif; color: #1e293b; margin: 20px; font-size: 12px; }
         .invoice { page-break-after: always; padding-bottom: 20px; }
         .invoice:last-child { page-break-after: auto; }
-        header { display: flex; justify-content: space-between; border-bottom: 2px solid #714B67; padding-bottom: 10px; margin-bottom: 12px; }
+        header { display: flex; justifyContent: space-between; border-bottom: 2px solid #714B67; padding-bottom: 10px; margin-bottom: 12px; }
         h1 { color: #714B67; font-size: 20px; margin: 0 0 4px; }
         .meta { background: #f8fafc; border: 1px solid #e2e8f0; padding: 8px; margin-bottom: 10px; }
         .meta span { float: right; }
@@ -1120,7 +1105,7 @@ export default function App() {
           <title>Customer Report - ${customer.name}</title>
           <style>
             body { font-family: 'Helvetica Neue', Arial, sans-serif; padding: 30px; color: #333; direction: rtl; text-align: right; background: #fff; }
-            .header { display: flex; justify-content: space-between; border-bottom: 2px solid #714B67; padding-bottom: 15px; margin-bottom: 20px; }
+            .header { display: flex; justifyContent: space-between; border-bottom: 2px solid #714B67; padding-bottom: 15px; margin-bottom: 20px; }
             .company { font-size: 20px; font-weight: 800; color: #714B67; text-transform: uppercase; }
             .info-box { background: #f8fafc; border: 1px solid #e2e8f0; padding: 15px; border-radius: 8px; margin-bottom: 20px; font-size: 14px; line-height: 1.6; }
             table { width: 100%; border-collapse: collapse; margin-top: 15px; margin-bottom: 20px; }
@@ -1245,7 +1230,6 @@ export default function App() {
   return (
     <div style={{ minHeight: '100vh', width: '100%', margin: 0, padding: 0, backgroundColor: '#f8fafc', color: '#0f172a', fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif', boxSizing: 'border-box' }}>
 
-      {/* Odoo Enterprise Top Header */}
       <nav style={{ backgroundColor: '#714B67', color: '#ffffff', padding: '12px 20px', display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'center', gap: '12px', position: 'sticky', top: 0, zIndex: 1000, boxShadow: '0 2px 6px rgba(0,0,0,0.15)' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
           <h1 style={{ fontSize: '15px', fontWeight: '800', margin: 0, letterSpacing: '0.5px' }}>PLUS EVR ERP</h1>
@@ -1293,7 +1277,6 @@ export default function App() {
           </div>
         )}
 
-        {/* DASHBOARD */}
         {activeTab === 'dashboard' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
             <div style={{ backgroundColor: '#ffffff', padding: '18px 24px', borderRadius: '10px', border: '1px solid #e2e8f0', boxShadow: '0 1px 3px rgba(0,0,0,0.05)', display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'center', gap: '10px' }}>
@@ -1380,7 +1363,6 @@ export default function App() {
           </div>
         )}
 
-        {/* INVENTORY & REGIONAL PRICING */}
         {activeTab === 'inventory' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
             <h2 style={{ margin: 0, fontSize: '18px', fontWeight: '700', color: '#1e293b' }}>Stock & Regional Pricing (Prices per Pair)</h2>
@@ -1479,7 +1461,6 @@ export default function App() {
           </div>
         )}
 
-        {/* SEARCH PRODUCT VIEW */}
         {activeTab === 'search' && (
           <div style={{ maxWidth: '700px', margin: '30px auto', backgroundColor: '#ffffff', padding: '30px', borderRadius: '12px', border: '1px solid #e2e8f0', boxShadow: '0 4px 6px rgba(0,0,0,0.05)' }}>
             <h2 style={{ fontSize: '20px', fontWeight: '800', marginBottom: '8px', color: '#1e293b' }}>Live Inventory Search</h2>
@@ -1541,7 +1522,6 @@ export default function App() {
           </div>
         )}
 
-        {/* CUSTOMERS / KHATA VIEW WITH GENERATED UNIQUE ID */}
         {activeTab === 'customers' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
@@ -1666,7 +1646,6 @@ export default function App() {
           </div>
         )}
 
-        {/* CUSTOMER WEEKLY / DATE-RANGE REPORT VIEW */}
         {activeTab === 'reports' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
             <h2 style={{ margin: 0, fontSize: '18px', fontWeight: '700', color: '#1e293b' }}>گاہک کی ہفتہ وار یا کسٹم رپورٹ جنریٹر (Customer Report Generator)</h2>
@@ -1805,7 +1784,6 @@ export default function App() {
           </div>
         )}
 
-        {/* MULTI-ITEM BILLING */}
         {activeTab === 'sales' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
@@ -2109,7 +2087,6 @@ export default function App() {
                         </td>
                         <td style={{ padding: '14px', textAlign: 'center' }}>
                           <div style={{ display: 'flex', gap: '6px', justifyContent: 'center', flexWrap: 'wrap' }}>
-                            {/* VIEW PDF BILL BUTTON PLACED AT THE FRONT */}
                             <button 
                               onClick={() => handleViewPdfBill(s)}
                               style={{ backgroundColor: '#0f766e', color: '#fff', border: 'none', padding: '6px 10px', borderRadius: '6px', cursor: 'pointer', fontWeight: '600', fontSize: '12px' }}
@@ -2162,7 +2139,6 @@ export default function App() {
           </div>
         )}
 
-        {/* DAILY WAGES */}
         {activeTab === 'wages' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
             <h2 style={{ margin: 0, fontSize: '18px', fontWeight: '700', color: '#1e293b' }}>Daily Wages & Worker Ledger</h2>
@@ -2196,7 +2172,6 @@ export default function App() {
           </div>
         )}
 
-        {/* EXPENSES */}
         {activeTab === 'expenses' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
             <h2 style={{ margin: 0, fontSize: '18px', fontWeight: '700', color: '#1e293b' }}>Factory Expenditure</h2>
@@ -2232,7 +2207,6 @@ export default function App() {
           </div>
         )}
 
-        {/* TOURS */}
         {activeTab === 'tours' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
             <h2 style={{ margin: 0, fontSize: '18px', fontWeight: '700', color: '#1e293b' }}>Sales Rep Tour Accounting</h2>
@@ -2270,7 +2244,6 @@ export default function App() {
           </div>
         )}
 
-        {/* P&L */}
         {activeTab === 'pnl' && (
           <div style={{ maxWidth: '600px', margin: '30px auto', backgroundColor: '#ffffff', padding: '30px', borderRadius: '12px', border: '1px solid #e2e8f0', boxShadow: '0 4px 6px rgba(0,0,0,0.05)' }}>
             <h2 style={{ textAlign: 'center', fontSize: '20px', fontWeight: '800', marginBottom: '24px', color: '#1e293b' }}>Profit & Loss Statement</h2>
@@ -2291,7 +2264,6 @@ export default function App() {
           </div>
         )}
 
-        {/* BALANCE SHEET */}
         {activeTab === 'balancesheet' && (
           <div style={{ maxWidth: '750px', margin: '30px auto', backgroundColor: '#ffffff', padding: '30px', borderRadius: '12px', border: '1px solid #e2e8f0', boxShadow: '0 4px 6px rgba(0,0,0,0.05)' }}>
             <h2 style={{ textAlign: 'center', fontSize: '20px', fontWeight: '800', marginBottom: '24px', color: '#1e293b' }}>Factory Balance Sheet</h2>
@@ -2314,7 +2286,6 @@ export default function App() {
           </div>
         )}
 
-        {/* PWA / MOBILE */}
         {activeTab === 'pwa' && (
           <div style={{ maxWidth: '550px', margin: '40px auto', backgroundColor: '#ffffff', padding: '40px', borderRadius: '12px', border: '1px solid #e2e8f0', boxShadow: '0 4px 6px rgba(0,0,0,0.05)', textAlign: 'center' }}>
             <h2 style={{ fontSize: '20px', fontWeight: '800', marginBottom: '12px', color: '#1e293b' }}>Mobile-Accessible PWA Ready</h2>
