@@ -194,6 +194,12 @@ export default function App() {
   const [editSaleInputs, setEditSaleInputs] = useState({ transportCompany: '', builtyNo: '', discountPerPair: {} })
   const [selectedSaleIds, setSelectedSaleIds] = useState([])
 
+  // Modal View Bill state
+  const [selectedBill, setSelectedBill] = useState(null)
+  const handleViewBill = (sale) => {
+    setSelectedBill(sale)
+  }
+
   const [reportCustId, setReportCustId] = useState('');
   const [reportStartDate, setReportStartDate] = useState(
     new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]
@@ -906,9 +912,9 @@ export default function App() {
             th, td { border: 1px solid #cbd5e1; padding: 6px; font-size: 10px; line-height: 1.15; }
             th { background-color: #f1f5f9; color: #334155; font-weight: 700; text-transform: uppercase; font-size: 11px; }
             .total-section { width: 250px; margin-left: auto; background: #f8fafc; border: 1px solid #e2e8f0; padding: 7px 9px; border-radius: 4px; font-size: 11px; }
-            .total-row { display: flex; justifyContent: space-between; margin-bottom: 3px; }
+            .total-row { display: flex; justify-content: space-between; margin-bottom: 3px; }
             .net-amount { font-size: 13px; font-weight: 800; color: #16a34a; border-top: 1px solid #cbd5e1; padding-top: 4px; margin-top: 4px; }
-            .signature-section { margin-top: 18px; display: flex; justifyContent: space-between; font-size: 10px; color: #475569; }
+            .signature-section { margin-top: 18px; display: flex; justify-content: space-between; font-size: 10px; color: #475569; }
             .sig-line { width: 160px; border-top: 1px solid #94a3b8; text-align: center; padding-top: 4px; }
             .footer { margin-top: 10px; text-align: center; font-size: 9px; color: #94a3b8; border-top: 1px solid #e2e8f0; padding-top: 4px; }
             .print-btn { display: block; width: 100%; max-width: 200px; margin: 20px auto 0 auto; background: #714B67; color: white; border: none; padding: 10px; border-radius: 6px; font-weight: bold; cursor: pointer; text-align: center; }
@@ -1008,7 +1014,7 @@ export default function App() {
         body { font-family: Arial, sans-serif; color: #1e293b; margin: 20px; font-size: 12px; }
         .invoice { page-break-after: always; padding-bottom: 20px; }
         .invoice:last-child { page-break-after: auto; }
-        header { display: flex; justifyContent: space-between; border-bottom: 2px solid #714B67; padding-bottom: 10px; margin-bottom: 12px; }
+        header { display: flex; justify-content: space-between; border-bottom: 2px solid #714B67; padding-bottom: 10px; margin-bottom: 12px; }
         h1 { color: #714B67; font-size: 20px; margin: 0 0 4px; }
         .meta { background: #f8fafc; border: 1px solid #e2e8f0; padding: 8px; margin-bottom: 10px; }
         .meta span { float: right; }
@@ -1105,7 +1111,7 @@ export default function App() {
           <title>Customer Report - ${customer.name}</title>
           <style>
             body { font-family: 'Helvetica Neue', Arial, sans-serif; padding: 30px; color: #333; direction: rtl; text-align: right; background: #fff; }
-            .header { display: flex; justifyContent: space-between; border-bottom: 2px solid #714B67; padding-bottom: 15px; margin-bottom: 20px; }
+            .header { display: flex; justify-content: space-between; border-bottom: 2px solid #714B67; padding-bottom: 15px; margin-bottom: 20px; }
             .company { font-size: 20px; font-weight: 800; color: #714B67; text-transform: uppercase; }
             .info-box { background: #f8fafc; border: 1px solid #e2e8f0; padding: 15px; border-radius: 8px; margin-bottom: 20px; font-size: 14px; line-height: 1.6; }
             table { width: 100%; border-collapse: collapse; margin-top: 15px; margin-bottom: 20px; }
@@ -2088,6 +2094,21 @@ export default function App() {
                         <td style={{ padding: '14px', textAlign: 'center' }}>
                           <div style={{ display: 'flex', gap: '6px', justifyContent: 'center', flexWrap: 'wrap' }}>
                             <button 
+                              onClick={() => handleViewBill(s)}
+                              style={{
+                                backgroundColor: '#0f766e',
+                                color: '#fff',
+                                border: 'none',
+                                padding: '6px 10px',
+                                borderRadius: '6px',
+                                cursor: 'pointer',
+                                fontWeight: '600',
+                                fontSize: '12px'
+                              }}>
+                              👁️ View Bill
+                            </button>
+
+                            <button 
                               onClick={() => handleViewPdfBill(s)}
                               style={{ backgroundColor: '#0f766e', color: '#fff', border: 'none', padding: '6px 10px', borderRadius: '6px', cursor: 'pointer', fontWeight: '600', fontSize: '12px' }}
                             >
@@ -2295,6 +2316,132 @@ export default function App() {
           </div>
         )}
       </main>
+
+      {/* View Bill Modal Overlay */}
+      {selectedBill && (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            backgroundColor: 'rgba(0,0,0,0.6)',
+            display: 'flex',
+            justifyContent: 'center',
+            alignItems: 'center',
+            zIndex: 9999,
+            padding: '20px'
+          }}
+          onClick={() => setSelectedBill(null)}
+        >
+          <div
+            style={{
+              backgroundColor: '#fff',
+              width: '100%',
+              maxWidth: '900px',
+              maxHeight: '90vh',
+              overflowY: 'auto',
+              borderRadius: '12px',
+              padding: '30px',
+              position: 'relative'
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <button
+              onClick={() => setSelectedBill(null)}
+              style={{
+                position: 'absolute',
+                right: '15px',
+                top: '15px',
+                border: 'none',
+                background: '#ef4444',
+                color: '#fff',
+                width: '32px',
+                height: '32px',
+                borderRadius: '50%',
+                cursor: 'pointer',
+                fontSize: '18px'
+              }}
+            >
+              ×
+            </button>
+
+            <h2 style={{ marginBottom: '20px' }}>
+              Bill Preview (#{selectedBill.id})
+            </h2>
+
+            <p>
+              <strong>Customer:</strong> {selectedBill.customer} ({selectedBill.customerId || 'N/A'})
+            </p>
+
+            <p>
+              <strong>Transport Company:</strong>{' '}
+              {selectedBill.transportCompany || 'N/A'}
+            </p>
+
+            <p>
+              <strong>Builty No:</strong>{' '}
+              {selectedBill.builtyNo || 'N/A'}
+            </p>
+
+            <table
+              style={{
+                width: '100%',
+                borderCollapse: 'collapse',
+                marginTop: '20px'
+              }}
+            >
+              <thead>
+                <tr>
+                  <th style={{ padding: '10px', borderBottom: '1px solid #ddd', textAlign: 'left' }}>
+                    Item
+                  </th>
+                  <th style={{ padding: '10px', borderBottom: '1px solid #ddd' }}>
+                    Quantity
+                  </th>
+                  <th style={{ padding: '10px', borderBottom: '1px solid #ddd' }}>
+                    Price
+                  </th>
+                  <th style={{ padding: '10px', borderBottom: '1px solid #ddd' }}>
+                    Total
+                  </th>
+                </tr>
+              </thead>
+
+              <tbody>
+                {(selectedBill.lineItems || []).map((item, index) => (
+                  <tr key={index}>
+                    <td style={{ padding: '10px', borderBottom: '1px solid #eee' }}>
+                      {item.model || item.productName || 'Item'} (Size: {item.size || 'N/A'})
+                    </td>
+
+                    <td style={{ padding: '10px', textAlign: 'center', borderBottom: '1px solid #eee' }}>
+                      {item.qty || 0} {item.unitType || 'dozens'}
+                    </td>
+
+                    <td style={{ padding: '10px', textAlign: 'right', borderBottom: '1px solid #eee' }}>
+                      Rs. {Number(item.price || 0).toLocaleString()}
+                    </td>
+
+                    <td style={{ padding: '10px', textAlign: 'right', borderBottom: '1px solid #eee' }}>
+                      Rs. {Number((item.quantity || item.pairs || 0) * (item.price || 0) || item.grossAmount || 0).toLocaleString()}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+
+            <div
+              style={{
+                marginTop: '25px',
+                textAlign: 'right',
+                fontSize: '18px',
+                fontWeight: '700'
+              }}
+            >
+              Total: Rs. {Number(selectedBill.total || selectedBill.grandTotal || 0).toLocaleString()}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
