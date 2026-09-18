@@ -1067,142 +1067,121 @@ export default function App() {
     window.open(whatsappUrl, '_blank');
   };
 
-  // === Feature 3: Enhanced Stock Report Printer ===
-  const handlePrintStockReport = () => {
-    if (inventory.length === 0) {
-      alert('No inventory stock available to print.')
-      return
-    }
-
-    const printWindow = window.open('', '_blank', 'width=1000,height=800')
-    if (!printWindow) {
-      alert('Please allow pop-ups to print the stock report.')
-      return
-    }
-
-    // Group inventory by articleNumber for subtotals
-    const grouped = Object.entries(inventoryByArticle).sort(([a], [b]) => a.localeCompare(b))
-
-    const totalPairsAll = stockTotals.totalPairs
-    const totalDozensAll = stockTotals.totalDozens
-    const totalValueAll = stockReportRegion === 'Sindh' ? stockTotals.totalValueSindh : stockTotals.totalValuePunjab
-
-    let rowIndex = 0
-    const tableRows = grouped.map(([articleNumber, variants]) => {
-      const articlePairs = variants.reduce((acc, v) => acc + numberOrZero(v.qty), 0)
-      const articleDozens = articlePairs / 12
-      const articleValue = variants.reduce((acc, v) => {
-        const price = stockReportRegion === 'Sindh'
-          ? numberOrZero(v.priceSindh ?? v.price)
-          : numberOrZero(v.pricePunjab ?? v.price)
-        return acc + (numberOrZero(v.qty) * price)
-      }, 0)
-
-      const parentRow = `
-        <tr style="background-color: #ede9fe;">
-          <td colspan="4" style="text-align: right; font-weight: 800; color: #5b21b6;">
-            PARENT ARTICLE: ${articleNumber}
-            <span style="font-weight: 600; color: #6b7280; margin-left: 6px;">(${variants.length} variant${variants.length === 1 ? '' : 's'})</span>
-          </td>
-          <td style="text-align: center; font-weight: 800; color: #5b21b6;">${articleDozens.toFixed(2)} dozens <span style="font-weight: 500; color: #6b7280;">(${articlePairs} pairs)</span></td>
-          <td style="text-align: right; font-weight: 800; color: #5b21b6;">Rs. ${articleValue.toLocaleString()}</td>
-        </tr>
-      `
-
-      const variantRows = variants.map(item => {
-        rowIndex += 1
-        const pairs = numberOrZero(item.qty)
-        const dozens = pairs / 12
-        const punjabPrice = numberOrZero(item.pricePunjab ?? item.price)
-        const sindhPrice = numberOrZero(item.priceSindh ?? item.price)
-        const activePrice = stockReportRegion === 'Sindh' ? sindhPrice : punjabPrice
-        const lineValue = pairs * activePrice
-
-        return `
-          <tr>
-            <td style="text-align: center;">${rowIndex}</td>
-            <td style="text-align: center;">#${item.id}</td>
-            <td>${item.articleNumber || item.model || 'N/A'}</td>
-            <td style="text-align: center;">${item.size || 'N/A'} | ${item.color || 'N/A'}</td>
-            <td style="text-align: center; font-weight: bold; color: #16a34a;">${dozens.toFixed(2)} dozens <span style="font-weight: 500; color: #64748b;">(${pairs} pairs)</span></td>
-            <td style="text-align: right; font-weight: bold;">Rs. ${lineValue.toLocaleString()}</td>
-          </tr>
-        `
-      }).join('')
-
-      return parentRow + variantRows
-    }).join('')
-
-    printWindow.document.write(`
-      <html>
-        <head>
-          <title>Stock Inventory Report - ${stockReportRegion} Region</title>
-          <style>
-            body { font-family: 'Helvetica Neue', Arial, sans-serif; padding: 18px; color: #1e293b; background: #fff; margin: 0; font-size: 11px; }
-            .header { display: flex; justify-content: space-between; border-bottom: 2px solid #714B67; padding-bottom: 12px; margin-bottom: 15px; }
-            .company-name { font-size: 20px; font-weight: 800; text-transform: uppercase; color: #714B67; margin: 0; }
-            table { width: 100%; border-collapse: collapse; margin-top: 12px; }
-            th, td { border: 1px solid #cbd5e1; padding: 6px 8px; font-size: 10.5px; }
-            th { background-color: #f1f5f9; color: #334155; font-weight: 700; text-transform: uppercase; }
-            .summary-box { display: flex; justify-content: space-between; align-items: center; background: #f8fafc; border: 2px solid #714B67; padding: 14px 18px; border-radius: 8px; margin-top: 18px; font-size: 14px; font-weight: bold; page-break-inside: avoid; }
-            .footer { margin-top: 22px; text-align: center; font-size: 10px; color: #94a3b8; border-top: 1px solid #e2e8f0; padding-top: 8px; }
-            @media print { body { padding: 0; } @page { size: A4 landscape; margin: 8mm; } }
-          </style>
-        </head>
-        <body>
-          <div class="header">
-            <div>
-              <h1 class="company-name">PLUS EVR ERP Factory</h1>
-              <div style="color: #64748b;">Comprehensive Stock & Dozens Inventory Report</div>
-              <div style="color: #64748b;"><strong>Region Pricing Applied:</strong> ${stockReportRegion}</div>
-            </div>
-            <div style="text-align: right; font-size: 11px; line-height: 1.6;">
-              <div><strong>Date:</strong> ${new Date().toISOString().split('T')[0]}</div>
-              <div><strong>Total Articles:</strong> ${grouped.length}</div>
-              <div><strong>Total Variants:</strong> ${inventory.length}</div>
-            </div>
-          </div>
-
-          <table>
-            <thead>
-              <tr>
-                <th style="text-align: center; width: 40px;">#</th>
-                <th style="text-align: center; width: 60px;">ID</th>
-                <th style="text-align: left;">Article Number</th>
-                <th style="text-align: center; width: 130px;">Size & Color</th>
-                <th style="text-align: center; width: 180px;">Stock (Dozens & Pairs)</th>
-                <th style="text-align: right; width: 140px;">Total Valuation</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${tableRows}
-            </tbody>
-          </table>
-
-          <div class="summary-box">
-            <span>GRAND TOTAL FACTORY STOCK:</span>
-            <span style="color: #16a34a;">${totalDozensAll.toFixed(2)} Dozens</span>
-            <span style="color: #64748b; font-weight: 600;">(${totalPairsAll.toLocaleString()} pairs)</span>
-            <span style="color: #714B67;">Rs. ${totalValueAll.toLocaleString()}</span>
-          </div>
-
-          <div class="footer">
-            <p>Computer-generated stock inventory report from PLUS EVR ERP System.</p>
-          </div>
-
-          <script>
-            window.onload = function() {
-              window.print();
-              window.close();
-            };
-          </script>
-        </body>
-      </html>
-    `)
-    printWindow.document.close()
+const handlePrintStockReport = () => {
+  if (inventory.length === 0) {
+    alert('No inventory stock available to print.')
+    return
   }
 
-  const handlePrintCustomerReport = (customer, periodSales, periodPayments, openingApprox, netDue) => {
+  const printWindow = window.open('', '_blank', 'width=1000,height=800')
+  if (!printWindow) {
+    alert('Please allow pop-ups to print the stock report.')
+    return
+  }
+
+  // Group inventory by articleNumber for subtotals
+  const grouped = Object.entries(inventoryByArticle).sort(([a], [b]) => a.localeCompare(b))
+
+  const totalDozensAll = stockTotals.totalDozens
+
+  let rowIndex = 0
+  const tableRows = grouped.map(([articleNumber, variants]) => {
+    const articlePairs = variants.reduce((acc, v) => acc + numberOrZero(v.qty), 0)
+    const articleDozens = articlePairs / 12
+
+    const parentRow = `
+      <tr style="background-color: #ede9fe;">
+        <td colspan="4" style="text-align: right; font-weight: 800; color: #5b21b6;">
+          PARENT ARTICLE: ${articleNumber}
+          <span style="font-weight: 600; color: #6b7280; margin-left: 6px;">(${variants.length} variant${variants.length === 1 ? '' : 's'})</span>
+        </td>
+        <td style="text-align: center; font-weight: 800; color: #5b21b6;">${articleDozens.toFixed(2)} dozens</td>
+      </tr>
+    `
+
+    const variantRows = variants.map(item => {
+      rowIndex += 1
+      const pairs = numberOrZero(item.qty)
+      const dozens = pairs / 12
+
+      return `
+        <tr>
+          <td style="text-align: center;">${rowIndex}</td>
+          <td style="text-align: center;">#${item.id}</td>
+          <td>${item.articleNumber || item.model || 'N/A'}</td>
+          <td style="text-align: center;">${item.size || 'N/A'} | ${item.color || 'N/A'}</td>
+          <td style="text-align: center; font-weight: bold; color: #16a34a;">${dozens.toFixed(2)} dozens</td>
+        </tr>
+      `
+    }).join('')
+
+    return parentRow + variantRows
+  }).join('')
+
+  printWindow.document.write(`
+    <html>
+      <head>
+        <title>Stock Inventory Report (Dozens)</title>
+        <style>
+          body { font-family: 'Helvetica Neue', Arial, sans-serif; padding: 18px; color: #1e293b; background: #fff; margin: 0; font-size: 11px; }
+          .header { display: flex; justify-content: space-between; border-bottom: 2px solid #714B67; padding-bottom: 12px; margin-bottom: 15px; }
+          .company-name { font-size: 20px; font-weight: 800; text-transform: uppercase; color: #714B67; margin: 0; }
+          table { width: 100%; border-collapse: collapse; margin-top: 12px; }
+          th, td { border: 1px solid #cbd5e1; padding: 6px 8px; font-size: 10.5px; }
+          th { background-color: #f1f5f9; color: #334155; font-weight: 700; text-transform: uppercase; }
+          .summary-box { display: flex; justify-content: space-between; align-items: center; background: #f8fafc; border: 2px solid #714B67; padding: 14px 18px; border-radius: 8px; margin-top: 18px; font-size: 14px; font-weight: bold; page-break-inside: avoid; }
+          .footer { margin-top: 22px; text-align: center; font-size: 10px; color: #94a3b8; border-top: 1px solid #e2e8f0; padding-top: 8px; }
+          @media print { body { padding: 0; } @page { size: A4 portrait; margin: 8mm; } }
+        </style>
+      </head>
+      <body>
+        <div class="header">
+          <div>
+            <h1 class="company-name">PLUS EVR ERP Factory</h1>
+            <div style="color: #64748b;">Comprehensive Stock Report (Dozens Only)</div>
+          </div>
+          <div style="text-align: right; font-size: 11px; line-height: 1.6;">
+            <div><strong>Date:</strong> ${new Date().toISOString().split('T')[0]}</div>
+            <div><strong>Total Articles:</strong> ${grouped.length}</div>
+            <div><strong>Total Variants:</strong> ${inventory.length}</div>
+          </div>
+        </div>
+
+        <table>
+          <thead>
+            <tr>
+              <th style="text-align: center; width: 40px;">#</th>
+              <th style="text-align: center; width: 60px;">ID</th>
+              <th style="text-align: left;">Article Number</th>
+              <th style="text-align: center; width: 130px;">Size & Color</th>
+              <th style="text-align: center; width: 180px;">Stock (Dozens)</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${tableRows}
+          </tbody>
+        </table>
+
+        <div class="summary-box">
+          <span>GRAND TOTAL FACTORY STOCK:</span>
+          <span style="color: #16a34a;">${totalDozensAll.toFixed(2)} Dozens</span>
+        </div>
+
+        <div class="footer">
+          <p>Computer-generated stock inventory report from PLUS EVR ERP System.</p>
+        </div>
+
+        <script>
+          window.onload = function() {
+            window.print();
+            window.close();
+          };
+        </script>
+      </body>
+    </html>
+  `)
+  printWindow.document.close()
+}  const handlePrintCustomerReport = (customer, periodSales, periodPayments, openingApprox, netDue) => {
     const printWindow = window.open('', '_blank', 'width=800,height=600');
 
     const salesRows = periodSales.length === 0
@@ -1677,101 +1656,72 @@ export default function App() {
           </div>
         )}
 
-        {activeTab === 'stockreport' && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
-              <h2 style={{ margin: 0, fontSize: '18px', fontWeight: '700', color: '#1e293b' }}>📦 Stock Inventory Report & Dozens Summary</h2>
-              <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
-                <select
-                  value={stockReportRegion}
-                  onChange={e => setStockReportRegion(e.target.value)}
-                  style={{ padding: '10px 12px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '13px', backgroundColor: '#fff', fontWeight: '600' }}
-                >
-                  <option value="Punjab">Punjab Pricing</option>
-                  <option value="Sindh">Sindh Pricing</option>
-                </select>
-                <button
-                  onClick={handlePrintStockReport}
-                  style={{ backgroundColor: '#2563eb', color: '#fff', border: 'none', padding: '10px 18px', borderRadius: '6px', fontWeight: '700', cursor: 'pointer', fontSize: '13px' }}
-                >
-                  🖨️ Print / Save Stock Report PDF
-                </button>
-              </div>
-            </div>
+       {activeTab === 'stockreport' && (
+  <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
+      <h2 style={{ margin: 0, fontSize: '18px', fontWeight: '700', color: '#1e293b' }}>📦 Stock Inventory Report (Dozens)</h2>
+      <button
+        onClick={handlePrintStockReport}
+        style={{ backgroundColor: '#2563eb', color: '#fff', border: 'none', padding: '10px 18px', borderRadius: '6px', fontWeight: '700', cursor: 'pointer', fontSize: '13px' }}
+      >
+        🖨️ Print / Save Stock Report PDF
+      </button>
+    </div>
 
-            <div style={{ backgroundColor: '#ffffff', padding: '24px', borderRadius: '10px', border: '1px solid #e2e8f0', boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}>
-              {/* === Feature 3: Filter by article === */}
-              <div style={{ marginBottom: '20px' }}>
-                <input
-                  type="text"
-                  placeholder="🔍 Filter by article number, size, or color..."
-                  value={stockReportSearch}
-                  onChange={e => setStockReportSearch(e.target.value)}
-                  style={{ width: '100%', padding: '12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '14px', boxSizing: 'border-box' }}
-                />
-              </div>
+    <div style={{ backgroundColor: '#ffffff', padding: '24px', borderRadius: '10px', border: '1px solid #e2e8f0', boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}>
+      {/* Filter */}
+      <div style={{ marginBottom: '20px' }}>
+        <input
+          type="text"
+          placeholder="🔍 Filter by article number, size, or color..."
+          value={stockReportSearch}
+          onChange={e => setStockReportSearch(e.target.value)}
+          style={{ width: '100%', padding: '12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '14px', boxSizing: 'border-box' }}
+        />
+      </div>
 
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '15px', marginBottom: '25px' }}>
-                <div style={{ backgroundColor: '#f0fdf4', border: '1px solid #bbf7d0', padding: '18px', borderRadius: '8px' }}>
-                  <p style={{ margin: '0 0 5px 0', fontSize: '12px', fontWeight: '700', color: '#15803d' }}>GRAND TOTAL FACTORY STOCK</p>
-                  <p style={{ margin: 0, fontSize: '24px', fontWeight: '800', color: '#16a34a' }}>
-                    {filteredStockTotals.totalDozens.toFixed(2)} Dozens
-                  </p>
-                  <p style={{ margin: '4px 0 0 0', fontSize: '12px', color: '#64748b' }}>
-                    ({filteredStockTotals.totalPairs.toLocaleString()} total pairs)
-                  </p>
-                </div>
-                <div style={{ backgroundColor: '#faf5f8', border: '1px solid #f0d8ec', padding: '18px', borderRadius: '8px' }}>
-                  <p style={{ margin: '0 0 5px 0', fontSize: '12px', fontWeight: '700', color: '#714B67' }}>TOTAL INVENTORY VALUATION ({stockReportRegion})</p>
-                  <p style={{ margin: 0, fontSize: '24px', fontWeight: '800', color: '#714B67' }}>
-                    Rs. {filteredStockTotals.totalValue.toLocaleString()}
-                  </p>
-                </div>
-              </div>
+      {/* Grand Total Dozens */}
+      <div style={{ backgroundColor: '#f0fdf4', border: '1px solid #bbf7d0', padding: '18px', borderRadius: '8px', marginBottom: '25px', maxWidth: '360px' }}>
+        <p style={{ margin: '0 0 5px 0', fontSize: '12px', fontWeight: '700', color: '#15803d' }}>GRAND TOTAL FACTORY STOCK</p>
+        <p style={{ margin: 0, fontSize: '24px', fontWeight: '800', color: '#16a34a' }}>
+          {filteredStockTotals.totalDozens.toFixed(2)} Dozens
+        </p>
+      </div>
 
-              <div style={{ overflowX: 'auto' }}>
-                <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', minWidth: '750px' }}>
-                  <thead>
-                    <tr style={{ backgroundColor: '#f1f5f9', borderBottom: '1px solid #e2e8f0', fontSize: '12px', color: '#475569', textTransform: 'uppercase' }}>
-                      <th style={{ padding: '12px' }}>ID</th>
-                      <th style={{ padding: '12px' }}>Article Number</th>
-                      <th style={{ padding: '12px' }}>Size & Color</th>
-                      <th style={{ padding: '12px' }}>Stock in Dozens</th>
-                      <th style={{ padding: '12px' }}>Total Pairs</th>
-                      <th style={{ padding: '12px' }}>{stockReportRegion} Price / Pair</th>
-                      <th style={{ padding: '12px' }}>Total Line Value</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {filteredStockInventory.length === 0 ? (
-                      <tr><td colSpan="7" style={{ padding: '20px', textAlign: 'center', color: '#94a3b8' }}>No inventory stock matches the filter.</td></tr>
-                    ) : (
-                      filteredStockInventory.map(item => {
-                        const pairs = Number(item.qty || 0);
-                        const dozens = (pairs / 12).toFixed(2);
-                        const price = stockReportRegion === 'Sindh'
-                          ? Number(item.priceSindh ?? item.price ?? 0)
-                          : Number(item.pricePunjab ?? item.price ?? 0);
-                        const totalVal = pairs * price;
-                        return (
-                          <tr key={item.id} style={{ borderBottom: '1px solid #f1f5f9', fontSize: '14px' }}>
-                            <td style={{ padding: '12px', fontWeight: '700', color: '#714B67' }}>#{item.id}</td>
-                            <td style={{ padding: '12px', fontWeight: '700', color: '#0f172a' }}>{item.articleNumber || item.model}</td>
-                            <td style={{ padding: '12px', color: '#475569' }}>{item.size || 'N/A'} | {item.color || 'N/A'}</td>
-                            <td style={{ padding: '12px', fontWeight: '800', color: '#16a34a' }}>{dozens} Dozens</td>
-                            <td style={{ padding: '12px', color: '#334155' }}>{pairs} pairs</td>
-                            <td style={{ padding: '12px', fontWeight: '600', color: '#0f172a' }}>Rs. {price.toLocaleString()}</td>
-                            <td style={{ padding: '12px', fontWeight: '700', color: '#2563eb' }}>Rs. {totalVal.toLocaleString()}</td>
-                          </tr>
-                        );
-                      })
-                    )}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          </div>
-        )}
+      {/* Table: no prices, dozens only */}
+      <div style={{ overflowX: 'auto' }}>
+        <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', minWidth: '600px' }}>
+          <thead>
+            <tr style={{ backgroundColor: '#f1f5f9', borderBottom: '1px solid #e2e8f0', fontSize: '12px', color: '#475569', textTransform: 'uppercase' }}>
+              <th style={{ padding: '12px' }}>ID</th>
+              <th style={{ padding: '12px' }}>Article Number</th>
+              <th style={{ padding: '12px' }}>Size & Color</th>
+              <th style={{ padding: '12px' }}>Stock (Dozens)</th>
+            </tr>
+          </thead>
+          <tbody>
+            {filteredStockInventory.length === 0 ? (
+              <tr><td colSpan="4" style={{ padding: '20px', textAlign: 'center', color: '#94a3b8' }}>No inventory stock matches the filter.</td></tr>
+            ) : (
+              filteredStockInventory.map(item => {
+                const pairs = Number(item.qty || 0);
+                const dozens = (pairs / 12).toFixed(2);
+                return (
+                  <tr key={item.id} style={{ borderBottom: '1px solid #f1f5f9', fontSize: '14px' }}>
+                    <td style={{ padding: '12px', fontWeight: '700', color: '#714B67' }}>#{item.id}</td>
+                    <td style={{ padding: '12px', fontWeight: '700', color: '#0f172a' }}>{item.articleNumber || item.model}</td>
+                    <td style={{ padding: '12px', color: '#475569' }}>{item.size || 'N/A'} | {item.color || 'N/A'}</td>
+                    <td style={{ padding: '12px', fontWeight: '800', color: '#16a34a' }}>{dozens} Dozens</td>
+                  </tr>
+                );
+              })
+            )}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+)}
 
         {activeTab === 'search' && (
           <div style={{ maxWidth: '700px', margin: '30px auto', backgroundColor: '#ffffff', padding: '30px', borderRadius: '12px', border: '1px solid #e2e8f0', boxShadow: '0 4px 6px rgba(0,0,0,0.05)' }}>
