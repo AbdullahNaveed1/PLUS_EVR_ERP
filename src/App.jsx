@@ -1081,6 +1081,97 @@ export default function App() {
     window.open(whatsappUrl, '_blank');
   };
 
+  const handlePrintStockReport = () => {
+    const printWindow = window.open('', '_blank', 'width=900,height=700')
+    const totalDozensAll = inventory.reduce((acc, item) => acc + (Number(item.qty || 0) / 12), 0)
+
+    const tableRows = inventory.map((item, idx) => {
+      const pairs = Number(item.qty || 0)
+      const dozens = pairs / 12
+      const articleNo = item.articleNumber || item.model || 'N/A'
+      const punjabPrice = Number(item.pricePunjab ?? item.price ?? 0)
+      const sindhPrice = Number(item.priceSindh ?? item.price ?? 0)
+      const totalVal = pairs * punjabPrice
+
+      return `
+        <tr>
+          <td style="text-align: center;">${idx + 1}</td>
+          <td style="text-align: center;">#${item.id}</td>
+          <td><strong>${articleNo}</strong></td>
+          <td style="text-align: center;">${item.size || 'N/A'} | ${item.color || 'N/A'}</td>
+          <td style="text-align: center; font-weight: bold; color: #16a34a;">${dozens.toFixed(2)} dozens (${pairs} pairs)</td>
+          <td style="text-align: right;">Rs. ${punjabPrice.toLocaleString()}</td>
+          <td style="text-align: right; font-weight: bold;">Rs. ${totalVal.toLocaleString()}</td>
+        </tr>
+      `
+    }).join('')
+
+    printWindow.document.write(`
+      <html>
+        <head>
+          <title>Stock Inventory Report - Dozens Breakdown</title>
+          <style>
+            body { font-family: 'Helvetica Neue', Arial, sans-serif; padding: 20px; color: #1e293b; background: #fff; margin: 0; font-size: 12px; }
+            .header { display: flex; justify-content: space-between; border-bottom: 2px solid #714B67; padding-bottom: 12px; margin-bottom: 20px; }
+            .company-name { font-size: 20px; font-weight: 800; text-transform: uppercase; color: #714B67; margin: 0; }
+            table { width: 100%; border-collapse: collapse; margin-top: 15px; }
+            th, td { border: 1px solid #cbd5e1; padding: 8px; font-size: 11px; }
+            th { background-color: #f1f5f9; color: #334155; font-weight: 700; text-transform: uppercase; }
+            .summary-box { background: #f8fafc; border: 1px solid #e2e8f0; padding: 15px; border-radius: 6px; margin-top: 20px; font-size: 14px; font-weight: bold; display: flex; justify-content: space-between; }
+            .footer { margin-top: 30px; text-align: center; font-size: 10px; color: #94a3b8; border-top: 1px solid #e2e8f0; padding-top: 10px; }
+            @media print { body { padding: 0; } @page { size: A4 portrait; margin: 10mm; } }
+          </style>
+        </head>
+        <body>
+          <div class="header">
+            <div>
+              <h1 class="company-name">PLUS EVR ERP Factory</h1>
+              <div>Comprehensive Stock & Dozens Inventory Report</div>
+            </div>
+            <div style="text-align: right;">
+              <div><strong>Date:</strong> ${new Date().toISOString().split('T')[0]}</div>
+              <div><strong>Total Articles:</strong> ${inventory.length}</div>
+            </div>
+          </div>
+
+          <table>
+            <thead>
+              <tr>
+                <th style="text-align: center;">#</th>
+                <th style="text-align: center;">ID</th>
+                <th>Article Number</th>
+                <th style="text-align: center;">Size & Color</th>
+                <th style="text-align: center;">Stock (Dozens & Pairs)</th>
+                <th style="text-align: right;">Punjab Price/Pair</th>
+                <th style="text-align: right;">Total Valuation</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${tableRows}
+            </tbody>
+          </table>
+
+          <div class="summary-box">
+            <span>Grand Total Factory Stock:</span>
+            <span style="color: #714B67;">${totalDozensAll.toFixed(2)} Dozens</span>
+          </div>
+
+          <div class="footer">
+            <p>Computer-generated stock inventory report from PLUS EVR ERP System.</p>
+          </div>
+
+          <script>
+            window.onload = function() {
+              window.print();
+              window.close();
+            };
+          </script>
+        </body>
+      </html>
+    `)
+    printWindow.document.close()
+  }
+
   const handlePrintCustomerReport = (customer, periodSales, periodPayments, openingApprox, netDue) => {
     const printWindow = window.open('', '_blank', 'width=800,height=600');
 
@@ -1221,6 +1312,7 @@ export default function App() {
   const tabs = [
     { id: 'dashboard', label: 'Dashboard' },
     { id: 'inventory', label: 'Stock & Pricing' },
+    { id: 'stockreport', label: '📦 Stock Report' },
     { id: 'search', label: '🔍 Search Article' },
     { id: 'customers', label: 'Khata & Ledger' },
     { id: 'sales', label: 'Billing' },
@@ -1371,7 +1463,7 @@ export default function App() {
 
         {activeTab === 'inventory' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-            <h2 style={{ margin: 0, fontSize: '18px', fontWeight: '700', color: '#1e293b' }}>Stock & Regional Pricing (Prices per Pair)</h2>
+            <h2 style={{ margin: 0, fontSize: '18px', fontWeight: '700', color: '#1e293b' }}>Stock & Regional Pricing (Stock in Dozens & Pairs)</h2>
             <form onSubmit={handleAddInventory} style={{ backgroundColor: '#ffffff', padding: '20px', borderRadius: '10px', border: '1px solid #e2e8f0', boxShadow: '0 1px 3px rgba(0,0,0,0.05)', display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: '12px' }}>
               <input type="text" placeholder="Article Number" value={newItem.articleNumber} onChange={e=>setNewItem({...newItem, articleNumber: e.target.value})} style={{ padding: '10px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '14px', width: '100%', boxSizing: 'border-box' }} required />
               <input type="text" placeholder="Size (e.g. 42)" value={newItem.size} onChange={e=>setNewItem({...newItem, size: e.target.value})} style={{ padding: '10px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '14px', width: '100%', boxSizing: 'border-box' }} />
@@ -1391,7 +1483,7 @@ export default function App() {
                     <th style={{ padding: '14px' }}>ID</th>
                     <th style={{ padding: '14px' }}>Article Number</th>
                     <th style={{ padding: '14px' }}>Size & Color</th>
-                    <th style={{ padding: '14px' }}>Stock</th>
+                    <th style={{ padding: '14px' }}>Stock (Dozens & Pairs)</th>
                     <th style={{ padding: '14px' }}>Punjab / Pair</th>
                     <th style={{ padding: '14px' }}>Sindh / Pair</th>
                     <th style={{ padding: '14px', textAlign: 'center' }}>Manage Inventory (Update / Delete)</th>
@@ -1406,12 +1498,16 @@ export default function App() {
                     </tr>,
                     ...variants.map(item => {
                     const inputVal = updateStockInputs[item.id] || '';
+                    const totalPairs = Number(item.qty || 0);
+                    const dozensCount = (totalPairs / 12).toFixed(2);
                     return (
                       <tr key={item.id} style={{ borderBottom: '1px solid #f1f5f9', fontSize: '14px' }}>
                         <td style={{ padding: '14px', fontWeight: '700', color: '#714B67' }}>#{item.id}</td>
                         <td style={{ padding: '14px', fontWeight: '700', color: '#0f172a' }}>{item.articleNumber || item.model}</td>
                         <td style={{ padding: '14px', color: '#475569' }}>{item.size || 'N/A'} | {item.color || 'N/A'}</td>
-                        <td style={{ padding: '14px', color: '#16a34a', fontWeight: '700' }}>{item.qty} pairs</td>
+                        <td style={{ padding: '14px', color: '#16a34a', fontWeight: '700' }}>
+                          {dozensCount} dozens <span style={{ fontSize: '12px', color: '#64748b', fontWeight: 'normal' }}>({totalPairs} pairs)</span>
+                        </td>
                         <td style={{ padding: '14px', color: '#0f172a', fontWeight: '600' }}>Rs. {(item.pricePunjab !== undefined && item.pricePunjab !== null ? item.pricePunjab : (item.price || 0)).toLocaleString()}</td>
                         <td style={{ padding: '14px', color: '#2563eb', fontWeight: '600' }}>Rs. {(item.priceSindh !== undefined && item.priceSindh !== null ? item.priceSindh : (item.price || 0)).toLocaleString()}</td>
                         <td style={{ padding: '14px', textAlign: 'center' }}>
@@ -1467,6 +1563,79 @@ export default function App() {
           </div>
         )}
 
+        {activeTab === 'stockreport' && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
+              <h2 style={{ margin: 0, fontSize: '18px', fontWeight: '700', color: '#1e293b' }}>📦 Stock Inventory Report & Dozens Summary</h2>
+              <button
+                onClick={handlePrintStockReport}
+                style={{ backgroundColor: '#2563eb', color: '#fff', border: 'none', padding: '10px 18px', borderRadius: '6px', fontWeight: '700', cursor: 'pointer', fontSize: '13px' }}
+              >
+                🖨️ Print / Save Stock Report PDF
+              </button>
+            </div>
+
+            <div style={{ backgroundColor: '#ffffff', padding: '24px', borderRadius: '10px', border: '1px solid #e2e8f0', boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '15px', marginBottom: '25px' }}>
+                <div style={{ backgroundColor: '#f0fdf4', border: '1px solid #bbf7d0', padding: '18px', borderRadius: '8px' }}>
+                  <p style={{ margin: '0 0 5px 0', fontSize: '12px', fontWeight: '700', color: '#15803d' }}>GRAND TOTAL FACTORY STOCK</p>
+                  <p style={{ margin: 0, fontSize: '24px', fontWeight: '800', color: '#16a34a' }}>
+                    {(inventory.reduce((acc, item) => acc + Number(item.qty || 0), 0) / 12).toFixed(2)} Dozens
+                  </p>
+                  <p style={{ margin: '4px 0 0 0', fontSize: '12px', color: '#64748b' }}>
+                    ({inventory.reduce((acc, item) => acc + Number(item.qty || 0), 0).toLocaleString()} total pairs)
+                  </p>
+                </div>
+                <div style={{ backgroundColor: '#faf5f8', border: '1px solid #f0d8ec', padding: '18px', borderRadius: '8px' }}>
+                  <p style={{ margin: '0 0 5px 0', fontSize: '12px', fontWeight: '700', color: '#714B67' }}>TOTAL INVENTORY VALUATION</p>
+                  <p style={{ margin: 0, fontSize: '24px', fontWeight: '800', color: '#714B67' }}>
+                    Rs. {totalInventoryValue.toLocaleString()}
+                  </p>
+                </div>
+              </div>
+
+              <div style={{ overflowX: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', minWidth: '750px' }}>
+                  <thead>
+                    <tr style={{ backgroundColor: '#f1f5f9', borderBottom: '1px solid #e2e8f0', fontSize: '12px', color: '#475569', textTransform: 'uppercase' }}>
+                      <th style={{ padding: '12px' }}>ID</th>
+                      <th style={{ padding: '12px' }}>Article Number</th>
+                      <th style={{ padding: '12px' }}>Size & Color</th>
+                      <th style={{ padding: '12px' }}>Stock in Dozens</th>
+                      <th style={{ padding: '12px' }}>Total Pairs</th>
+                      <th style={{ padding: '12px' }}>Punjab Price / Pair</th>
+                      <th style={{ padding: '12px' }}>Total Line Value</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {inventory.length === 0 ? (
+                      <tr><td colSpan="7" style={{ padding: '20px', textAlign: 'center', color: '#94a3b8' }}>No inventory stock available.</td></tr>
+                    ) : (
+                      inventory.map(item => {
+                        const pairs = Number(item.qty || 0);
+                        const dozens = (pairs / 12).toFixed(2);
+                        const price = Number(item.pricePunjab ?? item.price ?? 0);
+                        const totalVal = pairs * price;
+                        return (
+                          <tr key={item.id} style={{ borderBottom: '1px solid #f1f5f9', fontSize: '14px' }}>
+                            <td style={{ padding: '12px', fontWeight: '700', color: '#714B67' }}>#{item.id}</td>
+                            <td style={{ padding: '12px', fontWeight: '700', color: '#0f172a' }}>{item.articleNumber || item.model}</td>
+                            <td style={{ padding: '12px', color: '#475569' }}>{item.size || 'N/A'} | {item.color || 'N/A'}</td>
+                            <td style={{ padding: '12px', fontWeight: '800', color: '#16a34a' }}>{dozens} Dozens</td>
+                            <td style={{ padding: '12px', color: '#334155' }}>{pairs} pairs</td>
+                            <td style={{ padding: '12px', fontWeight: '600', color: '#0f172a' }}>Rs. {price.toLocaleString()}</td>
+                            <td style={{ padding: '12px', fontWeight: '700', color: '#2563eb' }}>Rs. {totalVal.toLocaleString()}</td>
+                          </tr>
+                        );
+                      })
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        )}
+
         {activeTab === 'search' && (
           <div style={{ maxWidth: '700px', margin: '30px auto', backgroundColor: '#ffffff', padding: '30px', borderRadius: '12px', border: '1px solid #e2e8f0', boxShadow: '0 4px 6px rgba(0,0,0,0.05)' }}>
             <h2 style={{ fontSize: '20px', fontWeight: '800', marginBottom: '8px', color: '#1e293b' }}>Live Inventory Search</h2>
@@ -1493,7 +1662,7 @@ export default function App() {
                 <thead>
                   <tr style={{ backgroundColor: '#f1f5f9', borderBottom: '1px solid #e2e8f0', fontSize: '12px', color: '#475569', textTransform: 'uppercase' }}>
                     <th style={{ padding: '12px' }}>ID & Article No</th>
-                    <th style={{ padding: '12px' }}>Stock</th>
+                    <th style={{ padding: '12px' }}>Stock (Dozens)</th>
                     <th style={{ padding: '12px' }}>Punjab Price / Pair</th>
                     <th style={{ padding: '12px' }}>Sindh Price / Pair</th>
                   </tr>
@@ -1504,23 +1673,27 @@ export default function App() {
                       <td colSpan="4" style={{ padding: '20px', textAlign: 'center', color: '#94a3b8' }}>No inventory loaded or stock is empty.</td>
                     </tr>
                   ) : (
-                    inventory.map(item => (
-                      <tr 
-                        key={item.id} 
-                        className="search-item-row"
-                        data-search={`${item.id} ${item.articleNumber || item.model} ${item.model} ${item.size} ${item.color}`}
-                        style={{ borderBottom: '1px solid #f1f5f9', fontSize: '14px' }}
-                      >
-                        <td style={{ padding: '12px', fontWeight: '700', color: '#0f172a' }}>#{item.id} - {item.articleNumber || item.model} / {item.model} ({item.size || 'N/A'}{item.color ? `, ${item.color}` : ''})</td>
-                        <td style={{ padding: '12px' }}>
-                          <span style={{ padding: '4px 10px', borderRadius: '20px', fontSize: '12px', fontWeight: '700', backgroundColor: item.qty > 0 ? '#dcfce7' : '#fee2e2', color: item.qty > 0 ? '#15803d' : '#dc2626' }}>
-                            {item.qty > 0 ? `${item.qty} pairs` : 'Out of stock'}
-                          </span>
-                        </td>
-                        <td style={{ padding: '12px', fontWeight: '600', color: '#0f172a' }}>Rs. {(item.pricePunjab !== undefined && item.pricePunjab !== null ? item.pricePunjab : (item.price || 0)).toLocaleString()}</td>
-                        <td style={{ padding: '12px', fontWeight: '600', color: '#2563eb' }}>Rs. {(item.priceSindh !== undefined && item.priceSindh !== null ? item.priceSindh : (item.price || 0)).toLocaleString()}</td>
-                      </tr>
-                    ))
+                    inventory.map(item => {
+                      const pairs = Number(item.qty || 0);
+                      const dozens = (pairs / 12).toFixed(2);
+                      return (
+                        <tr 
+                          key={item.id} 
+                          className="search-item-row"
+                          data-search={`${item.id} ${item.articleNumber || item.model} ${item.model} ${item.size} ${item.color}`}
+                          style={{ borderBottom: '1px solid #f1f5f9', fontSize: '14px' }}
+                        >
+                          <td style={{ padding: '12px', fontWeight: '700', color: '#0f172a' }}>#{item.id} - {item.articleNumber || item.model} / {item.model} ({item.size || 'N/A'}{item.color ? `, ${item.color}` : ''})</td>
+                          <td style={{ padding: '12px' }}>
+                            <span style={{ padding: '4px 10px', borderRadius: '20px', fontSize: '12px', fontWeight: '700', backgroundColor: pairs > 0 ? '#dcfce7' : '#fee2e2', color: pairs > 0 ? '#15803d' : '#dc2626' }}>
+                              {pairs > 0 ? `${dozens} dozens (${pairs} pairs)` : 'Out of stock'}
+                            </span>
+                          </td>
+                          <td style={{ padding: '12px', fontWeight: '600', color: '#0f172a' }}>Rs. {(item.pricePunjab !== undefined && item.pricePunjab !== null ? item.pricePunjab : (item.price || 0)).toLocaleString()}</td>
+                          <td style={{ padding: '12px', fontWeight: '600', color: '#2563eb' }}>Rs. {(item.priceSindh !== undefined && item.priceSindh !== null ? item.priceSindh : (item.price || 0)).toLocaleString()}</td>
+                        </tr>
+                      );
+                    })
                   )}
                 </tbody>
               </table>
