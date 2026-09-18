@@ -2403,20 +2403,7 @@ export default function App() {
                         </td>
                         <td style={{ padding: '14px', textAlign: 'center' }}>
                           <div style={{ display: 'flex', gap: '6px', justifyContent: 'center', flexWrap: 'wrap' }}>
-                            <button
-                              onClick={() => handleViewBill(s)}
-                              style={{
-                                backgroundColor: '#0f766e',
-                                color: '#fff',
-                                border: 'none',
-                                padding: '6px 10px',
-                                borderRadius: '6px',
-                                cursor: 'pointer',
-                                fontWeight: '600',
-                                fontSize: '12px'
-                              }}>
-                              👁️ View Bill
-                            </button>
+                           
 
                             <button
                               onClick={() => handleViewPdfBill(s)}
