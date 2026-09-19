@@ -1,36 +1,21 @@
-using Microsoft.AspNetCore.Mvc;
-using Microsoft.EntityFrameworkCore;
-using ShoeFactoryApi.Data;
-using ShoeFactoryApi.Models;
+using System;
+using System.ComponentModel.DataAnnotations;
 
-namespace ShoeFactoryApi.Controllers
+namespace ShoeFactoryApi.Models
 {
-    [Route("api/payments")]
-    [ApiController]
-    public class PaymentsController : ControllerBase
+    public class Payment
     {
-        private readonly FactoryDbContext _context;
+        public int Id { get; set; }
 
-        public PaymentsController(FactoryDbContext context) => _context = context;
+        [Required]
+        public string CustomerId { get; set; } = string.Empty;
 
-        [HttpGet]
-        public async Task<ActionResult<IEnumerable<Payment>>> GetPayments() => await _context.Payments.OrderByDescending(payment => payment.Date).ThenByDescending(payment => payment.Id).ToListAsync();
+        [Required]
+        public string Customer { get; set; } = string.Empty;
 
-        [HttpPost]
-        public async Task<ActionResult<Payment>> PostPayment(Payment payment)
-        {
-            payment.Id = 0;
-            payment.Date = DateTime.SpecifyKind(payment.Date, DateTimeKind.Utc);
-            _context.Payments.Add(payment);
-            await _context.SaveChangesAsync();
-            return CreatedAtAction(nameof(GetPayment), new { id = payment.Id }, payment);
-        }
+        [Range(0.01, double.MaxValue, ErrorMessage = "Amount must be greater than zero.")]
+        public decimal Amount { get; set; }
 
-        [HttpGet("{id}")]
-        public async Task<ActionResult<Payment>> GetPayment(int id)
-        {
-            var payment = await _context.Payments.FindAsync(id);
-            return payment == null ? NotFound() : payment;
-        }
+        public DateTime Date { get; set; } = DateTime.UtcNow;
     }
 }

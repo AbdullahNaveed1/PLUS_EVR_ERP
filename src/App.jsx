@@ -296,9 +296,6 @@ export default function App() {
     setUsername(null)
   }
 
-  // ============================================================
-  // COMPUTED STOCK — true remaining = raw qty minus all sold pairs
-  // ============================================================
   const totalSoldPairsByProduct = useMemo(() => {
     const map = {}
     sales.forEach(sale => {
@@ -575,7 +572,6 @@ export default function App() {
     setCartItems(cartItems.filter((_, i) => i !== index))
   }
 
-  // === Stock Deduction — Always runs without blocking bill generation ===
   const deductStockFromInventory = async (lineItems) => {
     const headers = { Authorization: `Bearer ${token}` }
 
@@ -593,7 +589,7 @@ export default function App() {
       if (!current) return
 
       const currentQty = numberOrZero(current.qty)
-      const newQty = currentQty - soldPairs // Allows negative stock when oversold
+      const newQty = currentQty - soldPairs
 
       const updated = {
         id: current.id,
@@ -1953,32 +1949,21 @@ export default function App() {
                                   return;
                                 }
 
-                            const newPaymentRecord = {
-  customerId: Number(c.id), // Change from c.phone to numeric c.id if backend expects int
-  customer: c.name,
-  amount: Number(amount),
-  date: new Date().toISOString()
-}
-
-axios.post(`${API_BASE_URL}/api/payments`, newPaymentRecord, { headers: { Authorization: `Bearer ${token}` } })
-  .then(response => {
-    setPayments(prev => [...prev, response.data]);
-    setPaymentInputs({...paymentInputs, [c.id]: ''});
-    fetchAllData();
-  })
-  .catch(err => {
-    console.error('Error saving payment:', err.response?.data || err)
-    alert('Failed to save payment: ' + JSON.stringify(err.response?.data || 'Bad Request'))
-  })
+                                const newPaymentRecord = {
+                                  customerId: c.phone,
+                                  customer: c.name,
+                                  amount: Number(amount),
+                                  date: new Date().toISOString()
+                                }
                                 axios.post(`${API_BASE_URL}/api/payments`, newPaymentRecord, { headers: { Authorization: `Bearer ${token}` } })
                                   .then(response => {
                                     setPayments(prev => [...prev, response.data]);
                                     setPaymentInputs({...paymentInputs, [c.id]: ''});
-                                    fetchAllData(); // Instantly syncs ledger and payments data
+                                    fetchAllData();
                                   })
                                   .catch(err => {
-                                    console.error('Error saving payment:', err)
-                                    alert('Failed to save payment to the database.')
+                                    console.error('Error saving payment:', err.response?.data || err)
+                                    alert('Failed to save payment: ' + JSON.stringify(err.response?.data || 'Bad Request'))
                                   })
                               }}
                               style={{ backgroundColor: '#16a34a', color: '#fff', border: 'none', padding: '7px 12px', borderRadius: '4px', cursor: 'pointer', fontWeight: '600', fontSize: '12px' }}
