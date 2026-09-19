@@ -14,10 +14,14 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddControllers()
     .AddJsonOptions(options =>
     {
-        // Safety net: if any model ever has a circular navigation property
-        // (like Worker <-> WagePayment), don't let it crash serialization with a 500.
+        // Case-insensitive binding: "customerId" -> "CustomerId"
+        options.JsonSerializerOptions.PropertyNameCaseInsensitive = true;
+        // camelCase output: "CustomerId" -> "customerId" so the React app reads p.amount, p.customerId correctly
+        options.JsonSerializerOptions.PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase;
+        // Safety net for circular navigation properties (Worker <-> WagePayment)
         options.JsonSerializerOptions.ReferenceHandler = System.Text.Json.Serialization.ReferenceHandler.IgnoreCycles;
     });
+
 builder.Services.AddHostedService<DailyDatabaseBackupService>();
 
 // 2. Configure PostgreSQL Database Connection (Safe Port Parsing & Railway Priority)

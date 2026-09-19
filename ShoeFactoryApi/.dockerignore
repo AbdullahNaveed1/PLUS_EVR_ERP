@@ -1,0 +1,11 @@
+﻿**/bin/
+**/obj/
+**/node_modules/
+**/.git/
+**/.gitignore
+**/.kilo/
+**/.vs/
+**/.vscode/
+**/*.user
+**/*.suo
+**/appsettings.Development.json

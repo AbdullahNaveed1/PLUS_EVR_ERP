@@ -37,3 +37,6 @@ ShoeFactoryApi/appsettings.json
 **/publish/
 *.dump
 release/
+
+# AI tool worktrees — never commit
+.kilo/
