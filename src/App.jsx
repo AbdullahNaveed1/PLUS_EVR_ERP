@@ -1953,8 +1953,8 @@ export default function App() {
                                   return;
                                 }
 
-                              const newPaymentRecord = {
-  customerId: c.phone, // or c.id depending on your Customer model definition
+                            const newPaymentRecord = {
+  customerId: Number(c.id), // Change from c.phone to numeric c.id if backend expects int
   customer: c.name,
   amount: Number(amount),
   date: new Date().toISOString()
@@ -1964,11 +1964,11 @@ axios.post(`${API_BASE_URL}/api/payments`, newPaymentRecord, { headers: { Author
   .then(response => {
     setPayments(prev => [...prev, response.data]);
     setPaymentInputs({...paymentInputs, [c.id]: ''});
-    fetchAllData(); // Instantly updates the ledger and balances
+    fetchAllData();
   })
   .catch(err => {
     console.error('Error saving payment:', err.response?.data || err)
-    alert('Failed to save payment to the database.')
+    alert('Failed to save payment: ' + JSON.stringify(err.response?.data || 'Bad Request'))
   })
                                 axios.post(`${API_BASE_URL}/api/payments`, newPaymentRecord, { headers: { Authorization: `Bearer ${token}` } })
                                   .then(response => {
