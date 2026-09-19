@@ -296,32 +296,94 @@ export default function App() {
     setUsername(null)
   }
 
+  // ============================================================
+  // COMPUTED STOCK — true remaining = raw qty minus all sold pairs
+  // This makes oversold items show as NEGATIVE in the UI,
+  // even if the backend/DB clamps the stored qty at 0.
+  // ============================================================
+
+  // Total sold pairs per product id, aggregated across every bill
+  const totalSoldPairsByProduct = useMemo(() => {
+    const map = {}
+    sales.forEach(sale => {
+      const items = Array.isArray(sale.lineItems) ? sale.lineItems : []
+      items.forEach(item => {
+        const pid = String(item.productId || '').trim()
+        if (!pid || pid === 'N/A') return
+        const pairs = numberOrZero(item.pairs) || (numberOrZero(item.qty) * (item.unitType === 'pairs' ? 1 : 12))
+        if (pairs <= 0) return
+        map[pid] = (map[pid] || 0) + pairs
+      })
+    })
+    return map
+  }, [sales])
+
+  // Manual stock additions (via "+ Pairs" in inventory tab) — these are
+  // already baked into the DB qty, so we don't need to add them again.
+  // But when the DB clamps negatives to 0, we still need to subtract sold
+  // pairs on top of the raw qty. To detect clamping, we use this formula:
+  //
+  //   displayedStock = rawQty - soldPairsSinceClamp
+  //
+  // Since we can't know when the DB last clamped, we take the safer route:
+  //   displayedStock = rawQty - soldPairs
+  //
+  // and rely on the fact that when NOT clamped, rawQty already reflects
+  // the deduction. So we guard against double-counting by checking if
+  // rawQty is 0 while soldPairs > 0 — in that case we surface the deficit.
+  //
+  // Practical rule: if rawQty === 0 and soldPairs > 0, show -soldPairs
+  //                 otherwise show rawQty (already correct)
+  const inventoryWithTrueStock = useMemo(() => {
+    return inventory.map(item => {
+      const rawQty = numberOrZero(item.qty)
+      const sold = numberOrZero(totalSoldPairsByProduct[String(item.id)])
+
+      let trueStock
+      if (rawQty === 0 && sold > 0) {
+        // DB clamped it — surface the deficit
+        trueStock = -sold
+      } else if (rawQty < 0) {
+        // Backend stored negative — trust it
+        trueStock = rawQty
+      } else {
+        // Normal case — DB already deducted correctly
+        trueStock = rawQty
+      }
+
+      return { ...item, trueStock, soldPairs: sold, rawQty }
+    })
+  }, [inventory, totalSoldPairsByProduct])
+
   const stockTotals = useMemo(() => {
-    const totalPairs = inventory.reduce((acc, item) => acc + numberOrZero(item.qty), 0)
+    const totalPairs = inventoryWithTrueStock.reduce((acc, item) => acc + numberOrZero(item.trueStock), 0)
     const totalDozens = totalPairs / 12
-    const totalValuePunjab = inventory.reduce(
-      (acc, item) => acc + (numberOrZero(item.qty) * numberOrZero(item.pricePunjab ?? item.price)),
+    const totalValuePunjab = inventoryWithTrueStock.reduce(
+      (acc, item) => acc + (numberOrZero(item.trueStock) * numberOrZero(item.pricePunjab ?? item.price)),
       0
     )
-    const totalValueSindh = inventory.reduce(
-      (acc, item) => acc + (numberOrZero(item.qty) * numberOrZero(item.priceSindh ?? item.price)),
+    const totalValueSindh = inventoryWithTrueStock.reduce(
+      (acc, item) => acc + (numberOrZero(item.trueStock) * numberOrZero(item.priceSindh ?? item.price)),
       0
     )
-    const uniqueArticles = new Set(inventory.map(i => i.articleNumber || i.model || 'Unassigned')).size
-    return { totalPairs, totalDozens, totalValuePunjab, totalValueSindh, uniqueArticles, variantCount: inventory.length }
-  }, [inventory])
+    const uniqueArticles = new Set(inventoryWithTrueStock.map(i => i.articleNumber || i.model || 'Unassigned')).size
+    return { totalPairs, totalDozens, totalValuePunjab, totalValueSindh, uniqueArticles, variantCount: inventoryWithTrueStock.length }
+  }, [inventoryWithTrueStock])
 
   const totalInventoryValue = stockTotals.totalValuePunjab
   const totalExpenses = expenses.reduce((acc, ex) => acc + Number(ex.amount || 0), 0)
   const totalSalesRevenue = sales.reduce((acc, s) => acc + Number(s.total || 0), 0)
   const totalPaymentsReceived = payments.reduce((acc, p) => acc + Number(p.amount || 0), 0)
   const netProfit = totalSalesRevenue - totalExpenses
-  const inventoryByArticle = inventory.reduce((groups, item) => {
-    const articleNumber = item.articleNumber || item.model || 'Unassigned'
-    groups[articleNumber] = groups[articleNumber] || []
-    groups[articleNumber].push(item)
-    return groups
-  }, {})
+
+  const inventoryByArticle = useMemo(() => {
+    return inventoryWithTrueStock.reduce((groups, item) => {
+      const articleNumber = item.articleNumber || item.model || 'Unassigned'
+      groups[articleNumber] = groups[articleNumber] || []
+      groups[articleNumber].push(item)
+      return groups
+    }, {})
+  }, [inventoryWithTrueStock])
 
   const totalMarketDues = customers.reduce((acc, c) => {
     const customerBills = sales.filter(s => s.customerId === c.phone);
@@ -377,7 +439,7 @@ export default function App() {
         model: item.model,
         size: item.size,
         color: item.color,
-        qty: Number(item.qty || 0) + incomingQty,
+        qty: Number(item.rawQty || item.qty || 0) + incomingQty,
         price: Number(item.pricePunjab ?? item.price ?? 0),
         pricePunjab: Number(item.pricePunjab ?? item.price ?? 0),
         priceSindh: Number(item.priceSindh ?? item.price ?? 0)
@@ -404,7 +466,7 @@ export default function App() {
         model: item.model,
         size: item.size,
         color: item.color,
-        qty: Number(item.qty || 0),
+        qty: Number(item.rawQty || item.qty || 0),
         pricePunjab: Number(priceInputs.punjab ?? item.pricePunjab ?? item.price ?? 0),
         priceSindh: Number(priceInputs.sindh ?? item.priceSindh ?? item.price ?? 0)
       }, { headers })
@@ -536,12 +598,10 @@ export default function App() {
     setCartItems(cartItems.filter((_, i) => i !== index))
   }
 
-  // === Stock Deduction Helper — deducts sold quantity from inventory in DB ===
-  // NOTE: Allows stock to go negative (no Math.max clamp) so deficits are tracked.
+  // === Stock Deduction — best-effort DB update. UI tracks true stock separately. ===
   const deductStockFromInventory = async (lineItems) => {
     const headers = { Authorization: `Bearer ${token}` }
 
-    // Group sold pairs by productId so multiple rows of the same item deduct once
     const soldByProduct = {}
     for (const item of lineItems) {
       const pid = String(item.productId || '').trim()
@@ -556,7 +616,7 @@ export default function App() {
       if (!current) return
 
       const currentQty = numberOrZero(current.qty)
-      const newQty = currentQty - soldPairs   // allows negative stock
+      const newQty = currentQty - soldPairs   // send negative if oversold
 
       const updated = {
         id: current.id,
@@ -580,12 +640,9 @@ export default function App() {
     await Promise.all(updates)
   }
 
-  // === Bill Generation — NO stock validation, bill always generates ===
   const handleGenerateMultiItemBill = async (e) => {
     e.preventDefault()
     if (!saleCustomerName || !saleCustomerUniqueId || cartItems.length === 0) return
-
-    // Stock availability is NOT checked — bills generate regardless of inventory levels.
 
     let grossTotal = 0;
 
@@ -633,11 +690,13 @@ export default function App() {
 
     try {
       const response = await axios.post(`${API_BASE_URL}/api/sales`, newRecord, { headers: { Authorization: `Bearer ${token}` } })
-      setSales(prevSales => [normalizeSale(response.data), ...prevSales])
+      const normalizedNewSale = normalizeSale(response.data)
 
-      // Deduct sold stock from inventory in DB (can go negative)
+      // Optimistically update local sales so true-stock math recomputes immediately
+      setSales(prevSales => [normalizedNewSale, ...prevSales])
+
       await deductStockFromInventory(evaluatedItems)
-      await fetchAllData()  // refresh to show updated stock
+      await fetchAllData()
     } catch (err) {
       console.error('Error saving bill:', err)
       alert('The bill could not be saved to the database.')
@@ -1106,7 +1165,6 @@ export default function App() {
     window.open(whatsappUrl, '_blank');
   };
 
-  // === Stock Report Print — DOZENS ONLY, NO PRICES ===
   const handlePrintStockReport = () => {
     if (inventory.length === 0) {
       alert('No inventory stock available to print.')
@@ -1124,23 +1182,25 @@ export default function App() {
 
     let rowIndex = 0
     const tableRows = grouped.map(([articleNumber, variants]) => {
-      const articlePairs = variants.reduce((acc, v) => acc + numberOrZero(v.qty), 0)
+      const articlePairs = variants.reduce((acc, v) => acc + numberOrZero(v.trueStock), 0)
       const articleDozens = articlePairs / 12
+      const parentNegative = articlePairs < 0
 
       const parentRow = `
         <tr style="background-color: #ede9fe;">
-          <td colspan="4" style="text-align: right; font-weight: 800; color: #5b21b6;">
+          <td colspan="4" style="text-align: right; font-weight: 800; color: ${parentNegative ? '#dc2626' : '#5b21b6'};">
             PARENT ARTICLE: ${articleNumber}
             <span style="font-weight: 600; color: #6b7280; margin-left: 6px;">(${variants.length} variant${variants.length === 1 ? '' : 's'})</span>
           </td>
-          <td style="text-align: center; font-weight: 800; color: #5b21b6;">${articleDozens.toFixed(2)} dozens</td>
+          <td style="text-align: center; font-weight: 800; color: ${parentNegative ? '#dc2626' : '#5b21b6'};">${articleDozens.toFixed(2)} dozens</td>
         </tr>
       `
 
       const variantRows = variants.map(item => {
         rowIndex += 1
-        const pairs = numberOrZero(item.qty)
+        const pairs = numberOrZero(item.trueStock)
         const dozens = pairs / 12
+        const isNegative = pairs < 0
 
         return `
           <tr>
@@ -1148,7 +1208,7 @@ export default function App() {
             <td style="text-align: center;">#${item.id}</td>
             <td>${item.articleNumber || item.model || 'N/A'}</td>
             <td style="text-align: center;">${item.size || 'N/A'} | ${item.color || 'N/A'}</td>
-            <td style="text-align: center; font-weight: bold; color: #16a34a;">${dozens.toFixed(2)} dozens</td>
+            <td style="text-align: center; font-weight: bold; color: ${isNegative ? '#dc2626' : '#16a34a'};">${dozens.toFixed(2)} dozens${isNegative ? ' (NEGATIVE)' : ''}</td>
           </tr>
         `
       }).join('')
@@ -1167,7 +1227,7 @@ export default function App() {
             table { width: 100%; border-collapse: collapse; margin-top: 12px; }
             th, td { border: 1px solid #cbd5e1; padding: 6px 8px; font-size: 10.5px; }
             th { background-color: #f1f5f9; color: #334155; font-weight: 700; text-transform: uppercase; }
-            .summary-box { display: flex; justify-content: space-between; align-items: center; background: #f8fafc; border: 2px solid #714B67; padding: 14px 18px; border-radius: 8px; margin-top: 18px; font-size: 14px; font-weight: bold; page-break-inside: avoid; }
+            .summary-box { display: flex; justify-content: space-between; align-items: center; background: ${totalDozensAll < 0 ? '#fef2f2' : '#f8fafc'}; border: 2px solid ${totalDozensAll < 0 ? '#dc2626' : '#714B67'}; padding: 14px 18px; border-radius: 8px; margin-top: 18px; font-size: 14px; font-weight: bold; page-break-inside: avoid; }
             .footer { margin-top: 22px; text-align: center; font-size: 10px; color: #94a3b8; border-top: 1px solid #e2e8f0; padding-top: 8px; }
             @media print { body { padding: 0; } @page { size: A4 portrait; margin: 8mm; } }
           </style>
@@ -1202,7 +1262,7 @@ export default function App() {
 
           <div class="summary-box">
             <span>GRAND TOTAL FACTORY STOCK:</span>
-            <span style="color: #16a34a;">${totalDozensAll.toFixed(2)} Dozens</span>
+            <span style="color: ${totalDozensAll < 0 ? '#dc2626' : '#16a34a'};">${totalDozensAll.toFixed(2)} Dozens</span>
           </div>
 
           <div class="footer">
@@ -1376,15 +1436,15 @@ export default function App() {
 
   const filteredStockInventory = useMemo(() => {
     const q = stockReportSearch.trim().toLowerCase()
-    if (!q) return inventory
-    return inventory.filter(item => {
+    if (!q) return inventoryWithTrueStock
+    return inventoryWithTrueStock.filter(item => {
       const haystack = `${item.id} ${item.articleNumber || ''} ${item.model || ''} ${item.size || ''} ${item.color || ''}`.toLowerCase()
       return haystack.includes(q)
     })
-  }, [inventory, stockReportSearch])
+  }, [inventoryWithTrueStock, stockReportSearch])
 
   const filteredStockTotals = useMemo(() => {
-    const totalPairs = filteredStockInventory.reduce((acc, item) => acc + numberOrZero(item.qty), 0)
+    const totalPairs = filteredStockInventory.reduce((acc, item) => acc + numberOrZero(item.trueStock), 0)
     const totalDozens = totalPairs / 12
     return { totalPairs, totalDozens }
   }, [filteredStockInventory])
@@ -1504,7 +1564,7 @@ export default function App() {
               </div>
               <div style={{ backgroundColor: '#ffffff', padding: '20px', borderRadius: '10px', border: '1px solid #e2e8f0', boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}>
                 <p style={{ fontSize: '11px', color: '#64748b', fontWeight: '700', margin: '0 0 8px 0', letterSpacing: '0.5px' }}>TOTAL STOCK IN DOZENS</p>
-                <p style={{ fontSize: '24px', fontWeight: '800', color: '#0f766e', margin: 0, wordBreak: 'break-all' }}>{stockTotals.totalDozens.toFixed(2)} Dozens</p>
+                <p style={{ fontSize: '24px', fontWeight: '800', color: stockTotals.totalDozens < 0 ? '#dc2626' : '#0f766e', margin: 0, wordBreak: 'break-all' }}>{stockTotals.totalDozens.toFixed(2)} Dozens</p>
                 <p style={{ fontSize: '11px', color: '#64748b', margin: '4px 0 0 0' }}>({formatPairs(stockTotals.totalPairs)} pairs)</p>
               </div>
             </div>
@@ -1574,9 +1634,9 @@ export default function App() {
             <h2 style={{ margin: 0, fontSize: '18px', fontWeight: '700', color: '#1e293b' }}>Stock & Regional Pricing (Stock in Dozens & Pairs)</h2>
 
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '12px' }}>
-              <div style={{ backgroundColor: '#f0fdf4', border: '1px solid #bbf7d0', padding: '16px 18px', borderRadius: '8px' }}>
-                <p style={{ margin: 0, fontSize: '11px', fontWeight: '700', color: '#15803d', letterSpacing: '0.5px' }}>TOTAL STOCK (DOZENS)</p>
-                <p style={{ margin: '4px 0 0 0', fontSize: '22px', fontWeight: '800', color: '#16a34a' }}>{stockTotals.totalDozens.toFixed(2)} Dozens</p>
+              <div style={{ backgroundColor: stockTotals.totalPairs < 0 ? '#fef2f2' : '#f0fdf4', border: stockTotals.totalPairs < 0 ? '1px solid #fecaca' : '1px solid #bbf7d0', padding: '16px 18px', borderRadius: '8px' }}>
+                <p style={{ margin: 0, fontSize: '11px', fontWeight: '700', color: stockTotals.totalPairs < 0 ? '#991b1b' : '#15803d', letterSpacing: '0.5px' }}>TOTAL STOCK (DOZENS)</p>
+                <p style={{ margin: '4px 0 0 0', fontSize: '22px', fontWeight: '800', color: stockTotals.totalPairs < 0 ? '#dc2626' : '#16a34a' }}>{stockTotals.totalDozens.toFixed(2)} Dozens</p>
                 <p style={{ margin: '2px 0 0 0', fontSize: '12px', color: '#64748b' }}>({stockTotals.totalPairs.toLocaleString()} pairs)</p>
               </div>
               <div style={{ backgroundColor: '#faf5f8', border: '1px solid #f0d8ec', padding: '16px 18px', borderRadius: '8px' }}>
@@ -1623,7 +1683,7 @@ export default function App() {
                     </tr>,
                     ...variants.map(item => {
                     const inputVal = updateStockInputs[item.id] || '';
-                    const totalPairs = Number(item.qty || 0);
+                    const totalPairs = numberOrZero(item.trueStock);
                     const dozensCount = (totalPairs / 12).toFixed(2);
                     const isNegative = totalPairs < 0;
                     return (
@@ -1736,7 +1796,7 @@ export default function App() {
                       <tr><td colSpan="4" style={{ padding: '20px', textAlign: 'center', color: '#94a3b8' }}>No inventory stock matches the filter.</td></tr>
                     ) : (
                       filteredStockInventory.map(item => {
-                        const pairs = Number(item.qty || 0);
+                        const pairs = Number(item.trueStock || 0);
                         const dozens = (pairs / 12).toFixed(2);
                         const isNegative = pairs < 0;
                         return (
@@ -1791,13 +1851,13 @@ export default function App() {
                   </tr>
                 </thead>
                 <tbody id="search-results-list">
-                  {inventory.length === 0 ? (
+                  {inventoryWithTrueStock.length === 0 ? (
                     <tr>
                       <td colSpan="4" style={{ padding: '20px', textAlign: 'center', color: '#94a3b8' }}>No inventory loaded or stock is empty.</td>
                     </tr>
                   ) : (
-                    inventory.map(item => {
-                      const pairs = Number(item.qty || 0);
+                    inventoryWithTrueStock.map(item => {
+                      const pairs = Number(item.trueStock || 0);
                       const dozens = (pairs / 12).toFixed(2);
                       const isNegative = pairs < 0;
                       return (
@@ -2579,7 +2639,7 @@ export default function App() {
                 </div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '14px', marginBottom: '10px' }}>
                   <span style={{ color: '#64748b', fontWeight: '600' }}>Stock in Dozens</span>
-                  <span style={{ fontWeight: '700', color: '#16a34a' }}>{stockTotals.totalDozens.toFixed(2)} Dozens</span>
+                  <span style={{ fontWeight: '700', color: stockTotals.totalDozens < 0 ? '#dc2626' : '#16a34a' }}>{stockTotals.totalDozens.toFixed(2)} Dozens</span>
                 </div>
               </div>
               <div style={{ backgroundColor: '#f8fafc', padding: '20px', borderRadius: '8px', border: '1px solid #e2e8f0' }}>
