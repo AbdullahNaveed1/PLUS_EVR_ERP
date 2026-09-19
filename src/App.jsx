@@ -1031,6 +1031,1046 @@ export default function App() {
             <div class="sig-line">Authorized Stamp</div>
           </div>
 
+Let's carefully verify your backend setup:
+1. Your `ExpensesController.cs` and `Payment.cs` are completely correct.
+2. The reason your payment request gave a `400 Bad Request` before is that the frontend payload structure or type mapping needed precise typing.
+
+Here is the full, updated **`App.jsx`** with the properly synchronized payment payload and real-time ledger auto-updating:
+
+```jsx
+import { useState, useEffect, useMemo } from 'react'
+import axios from 'axios'
+
+const API_BASE_URL = import.meta.env.VITE_API_URL || ''
+
+const numberOrZero = value => Number.isFinite(Number(value)) ? Number(value) : 0
+
+const getInvoiceNumber = sale => {
+  const customer = String(sale.customer || 'Customer').trim().replace(/[^a-z0-9]+/gi, '-').replace(/^-|-$/g, '')
+  const builty = String(sale.builtyNo || 'N-A').trim().replace(/[^a-z0-9]+/gi, '-').replace(/^-|-$/g, '')
+  return `${customer || 'Customer'}-${builty || 'N-A'}`
+}
+
+const getProductPrice = (product, region) => {
+  const regionalPrice = region === 'Sindh' ? product?.priceSindh : product?.pricePunjab
+  const fallbackPrice = region === 'Sindh' ? product?.pricePunjab : product?.priceSindh
+  return numberOrZero(regionalPrice) > 0 ? numberOrZero(regionalPrice) : numberOrZero(fallbackPrice)
+}
+
+const getPairCount = item => {
+  const quantity = numberOrZero(item.qty)
+  if (quantity > 0) return quantity * (item.unitType === 'pairs' ? 1 : 12)
+  return numberOrZero(item.pairs) || 1
+}
+
+const parseLegacyDescription = description => {
+  const text = String(description || '')
+  const articleMatch = text.match(/Article No:\s*([^\]\s]+)/i)
+  const quantityMatch = text.match(/-\s*([\d.]+)\s*(dozens|pairs)\s*\(([\d.]+)\s*pairs\)/i)
+  const priceMatch = text.match(/@\s*(?:Rs\.?|PKR)?\s*([\d,]+(?:\.\d+)?)\s*\/\s*pair/i)
+  const discountMatch = text.match(/Disc(?:ount)?\s*:\s*([\d,]+(?:\.\d+)?)\s*Rs\.?\s*\/\s*pair/i)
+  const sizeMatch = text.match(/\(Size:\s*([^\)]+)\)/i)
+  const modelMatch = text.match(/Article No:\s*[^\]]+\]\s*(.*?)\s*\(Size:/i)
+
+  return {
+    productId: articleMatch?.[1],
+    model: modelMatch?.[1],
+    qty: quantityMatch?.[1],
+    unitType: quantityMatch?.[2]?.toLowerCase(),
+    pairs: quantityMatch?.[3],
+    price: priceMatch?.[1]?.replace(/,/g, ''),
+    discountPerPair: discountMatch?.[1]?.replace(/,/g, ''),
+    size: sizeMatch?.[1]
+  }
+}
+
+const getDiscountPerPair = (item, discountTotal = 0, pairCount = 1) => {
+  const explicitDiscount = [
+    item.discountPerPair,
+    item.discountRate,
+    item.discount_per_pair,
+    item.pairDiscount,
+    item.discount
+  ].find(value => numberOrZero(value) > 0)
+
+  if (explicitDiscount !== undefined) return numberOrZero(explicitDiscount)
+
+  const description = String(item.description || '')
+  const embeddedDiscount = description.match(/Disc(?:ount)?\s*:\s*([\d,]+(?:\.\d+)?)\s*Rs\.?\s*\/\s*pair/i)
+  if (embeddedDiscount) return numberOrZero(embeddedDiscount[1].replace(/,/g, ''))
+
+  return pairCount > 0 ? numberOrZero(discountTotal) / pairCount : 0
+}
+
+const normalizeSale = sale => {
+  const rawItems = Array.isArray(sale.lineItems) && sale.lineItems.length > 0
+    ? sale.lineItems
+    : [{
+        productId: sale.productId || sale.itemNo || sale.itemNumber || sale.articleNo || 'N/A',
+        model: sale.model || sale.description || sale.items || 'General Wholesale Order',
+        description: sale.description || sale.items || 'General Wholesale Order',
+        qty: sale.qty,
+        unitType: sale.unitType,
+        pairs: sale.pairs,
+        price: sale.price || sale.unitPrice || sale.pricePerPair,
+        grossAmount: sale.rawTotal || sale.total,
+        netAmount: sale.total,
+        discountAmount: sale.discount
+      }]
+
+  const saleDiscount = numberOrZero(sale.discount || sale.totalDiscount || sale.discountAmount)
+  const items = rawItems.map(item => {
+    const parsed = parseLegacyDescription(item.description)
+    const quantity = numberOrZero(item.qty) > 0 ? item.qty : parsed.qty
+    const unitType = item.unitType === 'pairs' || item.unitType === 'dozens' ? item.unitType : parsed.unitType
+    const pairs = numberOrZero(parsed.pairs) || (numberOrZero(quantity) * (unitType === 'pairs' ? 1 : 12)) || getPairCount(item)
+    const price = numberOrZero(item.price || item.unitPrice || item.pricePerPair || parsed.price)
+    const grossAmount = numberOrZero(item.grossAmount) || (pairs * price)
+    const hasSavedNet = item.netAmount !== undefined && item.netAmount !== null && item.netAmount !== ''
+    const savedNet = hasSavedNet ? numberOrZero(item.netAmount) : grossAmount
+    const savedDiscount = numberOrZero(item.discountAmount || item.totalDiscount || item.discountTotal)
+    const discountAmount = savedDiscount || (grossAmount > savedNet ? grossAmount - savedNet : 0)
+    const discountPerPair = discountAmount > 0
+      ? discountAmount / pairs
+      : getDiscountPerPair({ ...item, discountPerPair: item.discountPerPair || parsed.discountPerPair }, discountAmount, pairs)
+
+    return {
+      ...item,
+      productId: item.productId || item.itemNo || item.itemNumber || item.articleNo || parsed.productId || 'N/A',
+      model: item.model || parsed.model || item.description || 'Footwear Article',
+      description: item.description || item.model || 'Footwear Article',
+      size: item.size || parsed.size || 'N/A',
+      qty: quantity || '-',
+      unitType: unitType || 'dozens',
+      pairs,
+      price: price || (pairs > 0 ? grossAmount / pairs : 0),
+      discountPerPair,
+      grossAmount,
+      discountAmount: discountAmount || (discountPerPair * pairs),
+      netAmount: savedNet || (grossAmount - (discountAmount || (discountPerPair * pairs)))
+    }
+  })
+
+  const knownDiscount = items.reduce((total, item) => total + item.discountAmount, 0)
+  const remainingDiscount = Math.max(0, saleDiscount - knownDiscount)
+  const grossTotal = items.reduce((total, item) => total + item.grossAmount, 0)
+  const normalizedItems = items.map(item => {
+    if (remainingDiscount <= 0 || item.discountAmount > 0) return item
+    const allocated = grossTotal > 0 ? remainingDiscount * (item.grossAmount / grossTotal) : remainingDiscount / items.length
+    return { ...item, discountAmount: allocated, discountPerPair: allocated / item.pairs, netAmount: item.grossAmount - allocated }
+  })
+
+  return { ...sale, lineItems: normalizedItems, discount: saleDiscount || knownDiscount }
+}
+
+const formatPairs = pairs => numberOrZero(pairs).toLocaleString()
+
+export default function App() {
+  const [token, setToken] = useState(() => localStorage.getItem('token'))
+  const [role, setRole] = useState(() => localStorage.getItem('role'))
+  const [username, setUsername] = useState(() => localStorage.getItem('username'))
+
+  const [loginForm, setLoginForm] = useState({ username: '', password: '' })
+  const [loginError, setLoginError] = useState('')
+  const [activeTab, setActiveTab] = useState('dashboard')
+
+  const [inventory, setInventory] = useState([])
+  const [customers, setCustomers] = useState([])
+  const [expenses, setExpenses] = useState([])
+  const [tours, setTours] = useState([])
+  const [workers, setWorkers] = useState([])
+  const [wagePayments, setWagePayments] = useState([])
+
+  const [sales, setSales] = useState(() => {
+    try {
+      const saved = localStorage.getItem('factory_sales')
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        return parsed.map(s => normalizeSale({
+          ...s,
+          transportCompany: s.transportCompany || 'N/A',
+          builtyNo: s.builtyNo || 'N/A'
+        }));
+      }
+      return [];
+    } catch (e) {
+      return []
+    }
+  })
+
+  const [payments, setPayments] = useState(() => {
+    try {
+      const saved = localStorage.getItem('factory_payments')
+      return saved ? JSON.parse(saved) : []
+    } catch (e) {
+      return []
+    }
+  })
+
+  const [loading, setLoading] = useState(false)
+
+  const [newItem, setNewItem] = useState({ articleNumber: '', model: '', size: '', color: '', qty: '', pricePunjab: '', priceSindh: '' })
+  const [newCust, setNewCust] = useState({ name: '', description: null, region: 'Punjab', balance: '' })
+  const [newExp, setNewExp] = useState({ category: '', amount: '', notes: '', date: new Date().toISOString().split('T')[0] })
+  const [newTour, setNewTour] = useState({ rep: '', region: '', cost: '', ordersValue: '', date: new Date().toISOString().split('T')[0] })
+
+  const [paymentInputs, setPaymentInputs] = useState({})
+  const [updateStockInputs, setUpdateStockInputs] = useState({})
+  const [updatePriceInputs, setUpdatePriceInputs] = useState({})
+  const [customerDescriptionInputs, setCustomerDescriptionInputs] = useState({})
+  const [newWorker, setNewWorker] = useState({ name: '', phone: '', role: '' })
+  const [newWagePayment, setNewWagePayment] = useState({ workerId: '', amount: '', paymentDate: new Date().toISOString().split('T')[0], notes: '' })
+
+  const [selectedCustomerId, setSelectedCustomerId] = useState('')
+  const [saleCustomerName, setSaleCustomerName] = useState('')
+  const [saleCustomerUniqueId, setSaleCustomerUniqueId] = useState('')
+  const [saleCustomerRegion, setSaleCustomerRegion] = useState('Punjab')
+  const [transportCompany, setTransportCompany] = useState('')
+  const [builtyNo, setBuiltyNo] = useState('')
+
+  const [cartItems, setCartItems] = useState([
+    { productId: '', model: '', size: '', qty: '', unitType: 'dozens', price: '' }
+  ])
+
+  const [editingSaleId, setEditingSaleId] = useState(null)
+  const [editSaleInputs, setEditSaleInputs] = useState({ transportCompany: '', builtyNo: '', discountPerPair: {} })
+  const [selectedSaleIds, setSelectedSaleIds] = useState([])
+
+  const [stockReportSearch, setStockReportSearch] = useState('')
+
+  const [reportCustId, setReportCustId] = useState('');
+  const [reportStartDate, setReportStartDate] = useState(
+    new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]
+  );
+  const [reportEndDate, setReportEndDate] = useState(
+    new Date().toISOString().split('T')[0]
+  );
+
+  const generateCustomerId = () => {
+    return 'CUST-' + Math.floor(1000 + Math.random() * 9000);
+  }
+
+  useEffect(() => {
+    if (token) {
+      fetchAllData()
+    }
+  }, [token])
+
+  const fetchAllData = async () => {
+    setLoading(true)
+    try {
+      const headers = { Authorization: `Bearer ${token}` }
+      const [prodRes, custRes, expRes, salesRes, paymentsRes] = await Promise.all([
+        axios.get(`${API_BASE_URL}/api/products`, { headers }),
+        axios.get(`${API_BASE_URL}/api/customers`, { headers }),
+        axios.get(`${API_BASE_URL}/api/expenses`, { headers }),
+        axios.get(`${API_BASE_URL}/api/sales`, { headers }),
+        axios.get(`${API_BASE_URL}/api/payments`, { headers })
+      ])
+      const [workersRes, wagePaymentsRes] = await Promise.all([
+        axios.get(`${API_BASE_URL}/api/wages/workers`, { headers }),
+        axios.get(`${API_BASE_URL}/api/wages/payments`, { headers })
+      ])
+      await axios.get(`${API_BASE_URL}/api/articles`, { headers })
+      setInventory(prodRes.data || [])
+      setCustomers(custRes.data || [])
+      setExpenses(expRes.data || [])
+      const savedSales = salesRes.data || []
+      const savedPayments = paymentsRes.data || []
+      const legacySales = JSON.parse(localStorage.getItem('factory_sales') || '[]')
+      const legacyPayments = JSON.parse(localStorage.getItem('factory_payments') || '[]')
+
+      if (savedSales.length === 0 && legacySales.length > 0) {
+        const migratedSales = await Promise.all(legacySales.map(sale => axios.post(`${API_BASE_URL}/api/sales`, sale, { headers })))
+        localStorage.removeItem('factory_sales')
+        setSales(migratedSales.map(response => normalizeSale(response.data)))
+      } else {
+        setSales(savedSales.map(normalizeSale))
+      }
+
+      if (savedPayments.length === 0 && legacyPayments.length > 0) {
+        const migratedPayments = await Promise.all(legacyPayments.map(payment => axios.post(`${API_BASE_URL}/api/payments`, payment, { headers })))
+        localStorage.removeItem('factory_payments')
+        setPayments(migratedPayments.map(response => response.data))
+      } else {
+        setPayments(savedPayments)
+      }
+      setWorkers(workersRes.data || [])
+      setWagePayments(wagePaymentsRes.data || [])
+    } catch (error) {
+      console.error("Failed to fetch data or unauthorized:", error)
+      if (error.response?.status === 401) {
+        handleLogout()
+      }
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const handleLogin = async (e) => {
+    e.preventDefault()
+    setLoginError('')
+    try {
+      const response = await axios.post(`${API_BASE_URL}/api/auth/login`, loginForm)
+      const { token, role, username } = response.data
+
+      localStorage.setItem('token', token)
+      localStorage.setItem('role', role || 'Admin')
+      localStorage.setItem('username', username || loginForm.username)
+
+      setToken(token)
+      setRole(role || 'Admin')
+      setUsername(username || loginForm.username)
+      setLoginForm({ username: '', password: '' })
+    } catch (err) {
+      setLoginError('Invalid username or password')
+    }
+  }
+
+  const handleLogout = () => {
+    localStorage.removeItem('token')
+    localStorage.removeItem('role')
+    localStorage.removeItem('username')
+    setToken(null)
+    setRole(null)
+    setUsername(null)
+  }
+
+  const totalSoldPairsByProduct = useMemo(() => {
+    const map = {}
+    sales.forEach(sale => {
+      const items = Array.isArray(sale.lineItems) ? sale.lineItems : []
+      items.forEach(item => {
+        const pid = String(item.productId || '').trim()
+        if (!pid || pid === 'N/A') return
+        const pairs = numberOrZero(item.pairs) || (numberOrZero(item.qty) * (item.unitType === 'pairs' ? 1 : 12))
+        if (pairs <= 0) return
+        map[pid] = (map[pid] || 0) + pairs
+      })
+    })
+    return map
+  }, [sales])
+
+  const inventoryWithTrueStock = useMemo(() => {
+    return inventory.map(item => {
+      const rawQty = numberOrZero(item.qty)
+      const sold = numberOrZero(totalSoldPairsByProduct[String(item.id)])
+
+      let trueStock
+      if (rawQty === 0 && sold > 0) {
+        trueStock = -sold
+      } else if (rawQty < 0) {
+        trueStock = rawQty
+      } else {
+        trueStock = rawQty
+      }
+
+      return { ...item, trueStock, soldPairs: sold, rawQty }
+    })
+  }, [inventory, totalSoldPairsByProduct])
+
+  const stockTotals = useMemo(() => {
+    const totalPairs = inventoryWithTrueStock.reduce((acc, item) => acc + numberOrZero(item.trueStock), 0)
+    const totalDozens = totalPairs / 12
+    const totalValuePunjab = inventoryWithTrueStock.reduce(
+      (acc, item) => acc + (numberOrZero(item.trueStock) * numberOrZero(item.pricePunjab ?? item.price)),
+      0
+    )
+    const totalValueSindh = inventoryWithTrueStock.reduce(
+      (acc, item) => acc + (numberOrZero(item.trueStock) * numberOrZero(item.priceSindh ?? item.price)),
+      0
+    )
+    const uniqueArticles = new Set(inventoryWithTrueStock.map(i => i.articleNumber || i.model || 'Unassigned')).size
+    return { totalPairs, totalDozens, totalValuePunjab, totalValueSindh, uniqueArticles, variantCount: inventoryWithTrueStock.length }
+  }, [inventoryWithTrueStock])
+
+  const totalInventoryValue = stockTotals.totalValuePunjab
+  const totalExpenses = expenses.reduce((acc, ex) => acc + Number(ex.amount || 0), 0)
+  const totalSalesRevenue = sales.reduce((acc, s) => acc + Number(s.total || 0), 0)
+  const totalPaymentsReceived = payments.reduce((acc, p) => acc + Number(p.amount || 0), 0)
+  const netProfit = totalSalesRevenue - totalExpenses
+
+  const inventoryByArticle = useMemo(() => {
+    return inventoryWithTrueStock.reduce((groups, item) => {
+      const articleNumber = item.articleNumber || item.model || 'Unassigned'
+      groups[articleNumber] = groups[articleNumber] || []
+      groups[articleNumber].push(item)
+      return groups
+    }, {})
+  }, [inventoryWithTrueStock])
+
+  const totalMarketDues = customers.reduce((acc, c) => {
+    const customerBills = sales.filter(s => s.customerId === c.phone);
+    const customerPayments = payments.filter(p => p.customerId === c.phone || p.customer === c.name);
+    const totalBilled = customerBills.reduce((bAcc, b) => bAcc + b.total, 0);
+    const totalPaid = customerPayments.reduce((pAcc, p) => pAcc + p.amount, 0);
+    return acc + (Number(c.balance) + totalBilled - totalPaid);
+  }, 0);
+
+  const handleAddInventory = async (e) => {
+    e.preventDefault()
+    if (!newItem.articleNumber || !newItem.qty || newItem.pricePunjab === '' || newItem.priceSindh === '') return
+    try {
+      await axios.post(`${API_BASE_URL}/api/products`, {
+        articleNumber: newItem.articleNumber,
+        model: newItem.articleNumber,
+        size: newItem.size,
+        color: newItem.color,
+        qty: Number(newItem.qty),
+        price: Number(newItem.pricePunjab),
+        pricePunjab: Number(newItem.pricePunjab),
+        priceSindh: Number(newItem.priceSindh)
+      }, { headers: { Authorization: `Bearer ${token}` } })
+
+      setNewItem({ articleNumber: '', model: '', size: '', color: '', qty: '', pricePunjab: '', priceSindh: '' })
+      fetchAllData()
+    } catch (err) {
+      console.error("Error adding product:", err)
+    }
+  }
+
+  const handleCreateParentArticle = async () => {
+    if (!newItem.articleNumber) return
+    try {
+      await axios.post(`${API_BASE_URL}/api/articles`, { articleNumber: newItem.articleNumber }, { headers: { Authorization: `Bearer ${token}` } })
+      fetchAllData()
+    } catch (err) {
+      alert(err.response?.data || 'Article already exists or could not be created.')
+    }
+  }
+
+  const handleUpdateInventoryStock = async (item) => {
+    const incomingQty = Number(updateStockInputs[item.id] || 0)
+    if (incomingQty <= 0) {
+      alert("Please enter a valid number of new pairs to add.")
+      return
+    }
+
+    try {
+      const updatedProduct = {
+        id: item.id,
+        articleNumber: item.articleNumber || item.model,
+        model: item.model,
+        size: item.size,
+        color: item.color,
+        qty: Number(item.rawQty || item.qty || 0) + incomingQty,
+        price: Number(item.pricePunjab ?? item.price ?? 0),
+        pricePunjab: Number(item.pricePunjab ?? item.price ?? 0),
+        priceSindh: Number(item.priceSindh ?? item.price ?? 0)
+      }
+      const headers = { Authorization: `Bearer ${token}` }
+      await axios.put(`${API_BASE_URL}/api/products/${item.id}`, updatedProduct, { headers })
+
+      setUpdateStockInputs({ ...updateStockInputs, [item.id]: '' })
+      fetchAllData()
+    } catch (err) {
+      console.error("Error updating stock:", err)
+      alert("Failed to update inventory stock.")
+    }
+  }
+
+  const handleUpdateInventoryPrice = async (item) => {
+    const priceInputs = updatePriceInputs[item.id] || {}
+    if (priceInputs.punjab === undefined && priceInputs.sindh === undefined) return
+    try {
+      const headers = { Authorization: `Bearer ${token}` }
+      await axios.put(`${API_BASE_URL}/api/products/${item.id}`, {
+        id: item.id,
+        articleNumber: item.articleNumber || item.model,
+        model: item.model,
+        size: item.size,
+        color: item.color,
+        qty: Number(item.rawQty || item.qty || 0),
+        pricePunjab: Number(priceInputs.punjab ?? item.pricePunjab ?? item.price ?? 0),
+        priceSindh: Number(priceInputs.sindh ?? item.priceSindh ?? item.price ?? 0)
+      }, { headers })
+      setUpdatePriceInputs({ ...updatePriceInputs, [item.id]: {} })
+      fetchAllData()
+    } catch (err) {
+      console.error('Error updating product price:', err)
+      alert('Failed to update product price.')
+    }
+  }
+
+  const handleAddWorker = async (e) => {
+    e.preventDefault()
+    if (!newWorker.name) return
+    await axios.post(`${API_BASE_URL}/api/wages/workers`, newWorker, { headers: { Authorization: `Bearer ${token}` } })
+    setNewWorker({ name: '', phone: '', role: '' })
+    fetchAllData()
+  }
+
+  const handleAddWagePayment = async (e) => {
+    e.preventDefault()
+    if (!newWagePayment.workerId || !newWagePayment.amount) return
+    await axios.post(`${API_BASE_URL}/api/wages/payments`, {
+      workerId: Number(newWagePayment.workerId),
+      amount: Number(newWagePayment.amount),
+      paymentDate: new Date(newWagePayment.paymentDate).toISOString(),
+      notes: newWagePayment.notes
+    }, { headers: { Authorization: `Bearer ${token}` } })
+    setNewWagePayment({ workerId: '', amount: '', paymentDate: new Date().toISOString().split('T')[0], notes: '' })
+    fetchAllData()
+  }
+
+  const handleDeleteProduct = async (id) => {
+    if (!window.confirm("Are you sure you want to delete this product from stock?")) return;
+    try {
+      const headers = { Authorization: `Bearer ${token}` };
+      await axios.delete(`${API_BASE_URL}/api/products/${id}`, { headers });
+      fetchAllData();
+    } catch (err) {
+      console.error("Error deleting product:", err);
+      alert("Failed to delete product.");
+    }
+  };
+
+  const handleAddCustomer = async (e) => {
+    e.preventDefault()
+    if (!newCust.name) return
+    try {
+      const generatedId = generateCustomerId();
+      await axios.post(`${API_BASE_URL}/api/customers`, {
+        name: newCust.name,
+        phone: generatedId,
+        description: newCust.description?.trim() || null,
+        region: newCust.region,
+        balance: Number(newCust.balance || 0)
+      }, { headers: { Authorization: `Bearer ${token}` } })
+
+      setNewCust({ name: '', description: null, region: 'Punjab', balance: '' })
+      fetchAllData()
+    } catch (err) {
+      console.error("Error adding customer:", err)
+    }
+  }
+
+  const handleUpdateCustomerDescription = async (customer) => {
+    try {
+      const description = customerDescriptionInputs[customer.id]?.trim() || null
+      await axios.put(`${API_BASE_URL}/api/customers/${customer.id}`, {
+        ...customer,
+        description
+      }, { headers: { Authorization: `Bearer ${token}` } })
+      setCustomerDescriptionInputs({ ...customerDescriptionInputs, [customer.id]: description || '' })
+      fetchAllData()
+    } catch (err) {
+      console.error('Error updating customer description:', err)
+      alert('Failed to update customer description.')
+    }
+  }
+
+  const handleAddExpense = async (e) => {
+    e.preventDefault()
+    if (!newExp.category || !newExp.amount) return
+    try {
+      await axios.post(`${API_BASE_URL}/api/expenses`, {
+        category: newExp.category,
+        amount: Number(newExp.amount),
+        notes: newExp.notes || '',
+        date: new Date(newExp.date).toISOString()
+      }, { headers: { Authorization: `Bearer ${token}` } })
+
+      setNewExp({ category: '', amount: '', notes: '', date: new Date().toISOString().split('T')[0] })
+      fetchAllData()
+    } catch (err) {
+      console.error("Error adding expense:", err)
+    }
+  }
+
+  const handleAddTour = (e) => {
+    e.preventDefault()
+    if (!newTour.rep || !newTour.cost) return
+    setTours([...tours, { id: Date.now(), ...newTour, cost: Number(newTour.cost), ordersValue: Number(newTour.ordersValue || 0) }])
+    setNewTour({ rep: '', region: '', cost: '', ordersValue: '', date: new Date().toISOString().split('T')[0] })
+  }
+
+  const handleCartItemChange = (index, field, value) => {
+    const updated = [...cartItems]
+    updated[index][field] = value
+
+    if (field === 'productId') {
+      const selectedProduct = inventory.find(p => p.id.toString() === value.toString())
+      if (selectedProduct) {
+        const regionalPrice = getProductPrice(selectedProduct, saleCustomerRegion)
+
+        updated[index].productId = selectedProduct.id
+        updated[index].model = selectedProduct.model
+        updated[index].size = selectedProduct.size || 'N/A'
+        updated[index].price = regionalPrice
+      }
+    }
+
+    setCartItems(updated)
+  }
+
+  const addCartRow = () => {
+    setCartItems([...cartItems, { productId: '', model: '', size: '', qty: '', unitType: 'dozens', price: '' }])
+  }
+
+  const removeCartRow = (index) => {
+    setCartItems(cartItems.filter((_, i) => i !== index))
+  }
+
+  const deductStockFromInventory = async (lineItems) => {
+    const headers = { Authorization: `Bearer ${token}` }
+
+    const soldByProduct = {}
+    for (const item of lineItems) {
+      const pid = String(item.productId || '').trim()
+      if (!pid || pid === 'N/A') continue
+      const soldPairs = numberOrZero(item.pairs) || (numberOrZero(item.qty) * (item.unitType === 'pairs' ? 1 : 12))
+      if (soldPairs <= 0) continue
+      soldByProduct[pid] = (soldByProduct[pid] || 0) + soldPairs
+    }
+
+    const updates = Object.entries(soldByProduct).map(async ([productId, soldPairs]) => {
+      const current = inventory.find(p => p.id.toString() === productId)
+      if (!current) return
+
+      const currentQty = numberOrZero(current.qty)
+      const newQty = currentQty - soldPairs
+
+      const updated = {
+        id: current.id,
+        articleNumber: current.articleNumber || current.model,
+        model: current.model,
+        size: current.size,
+        color: current.color,
+        qty: newQty,
+        price: Number(current.pricePunjab ?? current.price ?? 0),
+        pricePunjab: Number(current.pricePunjab ?? current.price ?? 0),
+        priceSindh: Number(current.priceSindh ?? current.price ?? 0)
+      }
+
+      try {
+        await axios.put(`${API_BASE_URL}/api/products/${current.id}`, updated, { headers })
+      } catch (err) {
+        console.error(`Failed to deduct stock for product ${productId}:`, err)
+      }
+    })
+
+    await Promise.all(updates)
+  }
+
+  const handleGenerateMultiItemBill = async (e) => {
+    e.preventDefault()
+    if (!saleCustomerName || !saleCustomerUniqueId || cartItems.length === 0) return
+
+    let grossTotal = 0;
+
+    const evaluatedItems = cartItems.map(row => {
+      const selectedProd = inventory.find(p => p.id.toString() === row.productId?.toString());
+      const modelName = row.model || selectedProd?.model || 'Article';
+      const sizeVal = row.size || selectedProd?.size || 'N/A';
+
+      const multiplier = row.unitType === 'dozens' ? 12 : 1
+      const itemPairs = Number(row.qty || 0) * multiplier
+      const unitPrice = getProductPrice(selectedProd, saleCustomerRegion)
+      const lineGross = itemPairs * unitPrice
+
+      grossTotal += lineGross
+
+      return {
+        productId: row.productId,
+        model: modelName,
+        size: sizeVal,
+        qty: row.qty,
+        unitType: row.unitType,
+        pairs: itemPairs,
+        price: unitPrice,
+        grossAmount: lineGross,
+        discountPerPair: 0,
+        discountAmount: 0,
+        netAmount: lineGross,
+        description: `[Article No: ${row.productId || 'N/A'}] ${modelName} (Size: ${sizeVal}) - ${row.qty} ${row.unitType} (${itemPairs} pairs) @ Rs. ${unitPrice}/pair`
+      }
+    })
+
+    const newRecord = {
+      id: Date.now(),
+      customerId: saleCustomerUniqueId,
+      customer: saleCustomerName,
+      region: saleCustomerRegion,
+      lineItems: evaluatedItems,
+      total: grossTotal,
+      rawTotal: grossTotal,
+      discount: 0,
+      transportCompany: transportCompany || 'N/A',
+      builtyNo: builtyNo || 'N/A',
+      date: new Date().toISOString().split('T')[0]
+    }
+
+    try {
+      const response = await axios.post(`${API_BASE_URL}/api/sales`, newRecord, { headers: { Authorization: `Bearer ${token}` } })
+      const normalizedNewSale = normalizeSale(response.data)
+
+      setSales(prevSales => [normalizedNewSale, ...prevSales])
+
+      await deductStockFromInventory(evaluatedItems)
+      await fetchAllData()
+    } catch (err) {
+      console.error('Error saving bill:', err)
+      alert('The bill could not be saved to the database.')
+      return
+    }
+
+    setSelectedCustomerId('')
+    setSaleCustomerName('')
+    setSaleCustomerUniqueId('')
+    setTransportCompany('')
+    setBuiltyNo('')
+    setCartItems([{ productId: '', model: '', size: '', qty: '', unitType: 'dozens', price: '' }])
+  }
+
+  const handleUpdateSaleDetails = async (saleId) => {
+    const updatedSales = sales.map(s => {
+      if (s.id === saleId) {
+        const discountInputs = editSaleInputs.discountPerPair || {}
+        const lineItems = (s.lineItems || []).map((item, index) => {
+          const pairs = getPairCount(item)
+          const grossAmount = numberOrZero(item.grossAmount) || (pairs * numberOrZero(item.price))
+          const discountPerPair = Math.max(0, numberOrZero(discountInputs[index]))
+          const discountAmount = Math.min(grossAmount, pairs * discountPerPair)
+          return {
+            ...item,
+            grossAmount,
+            discountPerPair,
+            discountAmount,
+            netAmount: grossAmount - discountAmount
+          }
+        })
+        const rawTotal = lineItems.reduce((total, item) => total + numberOrZero(item.grossAmount), 0)
+        const discount = lineItems.reduce((total, item) => total + numberOrZero(item.discountAmount), 0)
+
+        return {
+          ...s,
+          lineItems,
+          rawTotal,
+          discount,
+          total: rawTotal - discount,
+          transportCompany: editSaleInputs.transportCompany || s.transportCompany || 'N/A',
+          builtyNo: editSaleInputs.builtyNo || s.builtyNo || 'N/A'
+        };
+      }
+      return s;
+    });
+    const updatedSale = updatedSales.find(s => s.id === saleId)
+    try {
+      await axios.put(`${API_BASE_URL}/api/sales/${saleId}`, updatedSale, { headers: { Authorization: `Bearer ${token}` } })
+      setSales(updatedSales.map(normalizeSale))
+      setEditingSaleId(null)
+    } catch (err) {
+      console.error('Error updating bill:', err)
+      alert('Failed to update the bill details.')
+    }
+  }
+
+  const handleDeleteSelectedBills = async () => {
+    const selectedBills = sales.filter(sale => selectedSaleIds.includes(sale.id))
+    if (selectedBills.length === 0) {
+      alert('Please tick at least one bill to delete.')
+      return
+    }
+
+    const confirmed = window.confirm(`Delete ${selectedBills.length} selected bill${selectedBills.length === 1 ? '' : 's'}? This cannot be undone.`)
+    if (!confirmed) return
+
+    try {
+      await Promise.all(selectedBills.map(sale => axios.delete(`${API_BASE_URL}/api/sales/${sale.id}`, { headers: { Authorization: `Bearer ${token}` } })))
+      setSales(currentSales => currentSales.filter(sale => !selectedSaleIds.includes(sale.id)))
+      setSelectedSaleIds([])
+    } catch (err) {
+      console.error('Error deleting bills:', err)
+      alert('Failed to delete bills from the database.')
+    }
+  }
+
+  const handlePrintBill = (saleRecord) => {
+    const printWindow = window.open('', '_blank', 'width=900,height=700')
+    const invoiceNumber = getInvoiceNumber(saleRecord)
+    const billItems = saleRecord.lineItems || []
+    const quantityTotals = billItems.reduce((totals, item) => {
+      const pairs = Number(item.pairs || 0) || (Number(item.qty || 0) * (item.unitType === 'pairs' ? 1 : 12))
+      const enteredQuantity = Number(item.qty)
+      const dozens = item.unitType === 'pairs'
+        ? pairs / 12
+        : (enteredQuantity > 0 ? enteredQuantity : pairs / 12)
+
+      return {
+        dozens: totals.dozens + (Number.isFinite(dozens) ? dozens : 0),
+        pairs: totals.pairs + (Number.isFinite(pairs) ? pairs : 0)
+      }
+    }, { dozens: 0, pairs: 0 })
+
+    const rowsHtml = saleRecord.lineItems && saleRecord.lineItems.length > 0 ? saleRecord.lineItems.map((item, idx) => {
+      const displayModel = item.model || item.description || 'Footwear Article';
+      const displaySize = item.size || 'N/A';
+      const pairCount = Number(item.pairs || 0);
+      const enteredQuantity = Number(item.qty);
+      const dozenQuantity = item.unitType === 'pairs'
+        ? pairCount / 12
+        : (enteredQuantity > 0 ? enteredQuantity : pairCount / 12);
+      const displayQty = dozenQuantity > 0
+        ? `${dozenQuantity.toLocaleString()} dozens (${pairCount.toLocaleString()} pairs)`
+        : '-';
+      const unitPriceNum = Number(item.price || item.netAmount || saleRecord.total || 0);
+      const lineTotal = Number(item.grossAmount || item.netAmount || saleRecord.total || 0);
+
+      return `
+        <tr>
+          <td style="text-align: center; width: 30px;">${idx + 1}</td>
+          <td style="text-align: center; width: 60px;">#${item.productId || 'N/A'}</td>
+          <td>${displayModel} (Size: ${displaySize})</td>
+          <td style="text-align: center; width: 110px;">${displayQty}</td>
+          <td style="text-align: right; width: 85px;">Rs. ${unitPriceNum.toLocaleString()}</td>
+          <td style="text-align: right; width: 110px; font-weight: bold;">Rs. ${lineTotal.toLocaleString()}</td>
+        </tr>
+      `;
+    }).join('') : `
+      <tr>
+        <td style="text-align: center;">1</td>
+        <td style="text-align: center;">#N/A</td>
+        <td>${saleRecord.items || 'General Wholesale Order'}</td>
+        <td style="text-align: center;">-</td>
+        <td style="text-align: right;">-</td>
+        <td style="text-align: right; font-weight: bold;">Rs. ${(saleRecord.rawTotal || saleRecord.total).toLocaleString()}</td>
+      </tr>
+    `;
+
+    printWindow.document.write(`
+      <html>
+        <head>
+          <title>Invoice ${invoiceNumber}</title>
+          <style>
+            body { font-family: 'Helvetica Neue', Arial, sans-serif; padding: 10px; color: #1e293b; background: #fff; margin: 0; font-size: 11px; }
+            .invoice-header { display: flex; justify-content: space-between; border-bottom: 2px solid #714B67; padding-bottom: 12px; margin-bottom: 15px; }
+            .company-name { font-size: 18px; font-weight: 800; text-transform: uppercase; color: #714B67; margin: 0; }
+            .company-sub { font-size: 10px; color: #64748b; }
+            .invoice-details { text-align: right; font-size: 11px; line-height: 1.25; }
+            .meta-grid { display: flex; justify-content: space-between; background: #f8fafc; border: 1px solid #e2e8f0; padding: 7px 9px; border-radius: 4px; margin-bottom: 9px; font-size: 11px; }
+            table { width: 100%; border-collapse: collapse; margin-bottom: 9px; page-break-inside: avoid; }
+            tr { page-break-inside: avoid; }
+            th, td { border: 1px solid #cbd5e1; padding: 4px 6px; font-size: 10px; line-height: 1.15; }
+            th { background-color: #f1f5f9; color: #334155; font-weight: 700; text-transform: uppercase; font-size: 11px; }
+            .total-section { width: 250px; margin-left: auto; background: #f8fafc; border: 1px solid #e2e8f0; padding: 7px 9px; border-radius: 4px; font-size: 11px; page-break-inside: avoid; }
+            .total-row { display: flex; justify-content: space-between; margin-bottom: 3px; }
+            .net-amount { font-size: 13px; font-weight: 800; color: #16a34a; border-top: 1px solid #cbd5e1; padding-top: 4px; margin-top: 4px; }
+            .signature-section { margin-top: 18px; display: flex; justify-content: space-between; font-size: 10px; color: #475569; page-break-inside: avoid; }
+            .sig-line { width: 160px; border-top: 1px solid #94a3b8; text-align: center; padding-top: 4px; }
+            .footer { margin-top: 10px; text-align: center; font-size: 9px; color: #94a3b8; border-top: 1px solid #e2e8f0; padding-top: 4px; }
+            @media print {
+              body { padding: 0; }
+              @page { size: A4 portrait; margin: 7mm; }
+            }
+          </style>
+        </head>
+        <body>
+          <div class="invoice-header">
+            <div>
+              <h1 class="company-name">PLUS EVR ERP Factory</h1>
+              <div class="company-sub">Wholesale Footwear Manufacturing & Ledger</div>
+              <div class="company-sub">Lahore, Pakistan</div>
+            </div>
+            <div class="invoice-details">
+              <h3 style="margin: 0 0 4px 0; color: #1e293b;">WHOLESALE INVOICE</h3>
+              <div><strong>Invoice No:</strong> ${invoiceNumber}</div>
+              <div><strong>Date:</strong> ${saleRecord.date}</div>
+              <div><strong>Region:</strong> ${saleRecord.region || 'Punjab'}</div>
+            </div>
+          </div>
+
+          <div class="meta-grid">
+            <div>
+              <strong>Customer:</strong> <strong>${saleRecord.customer}</strong> (${saleRecord.customerId || 'N/A'})
+            </div>
+            <div>
+              <strong>Transport:</strong> ${saleRecord.transportCompany || 'N/A'} | <strong>Builty No:</strong> ${saleRecord.builtyNo || 'N/A'}
+            </div>
+          </div>
+
+          <table>
+            <thead>
+              <tr>
+                <th style="text-align: center;">#</th>
+                <th style="text-align: center;">Item No.</th>
+                <th>Description / Article Details</th>
+                <th style="text-align: center;">Quantity (Dozens)</th>
+                <th style="text-align: right;">Bill Rate/Pair</th>
+                <th style="text-align: right;">Bill Rate (PKR)</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${rowsHtml}
+            </tbody>
+            <tfoot>
+              <tr style="font-weight: 800; background-color: #f8fafc;">
+                <td colspan="3" style="text-align: right;">TOTAL QUANTITY:</td>
+                <td style="text-align: center;">${quantityTotals.dozens.toLocaleString()} dozens (${quantityTotals.pairs.toLocaleString()} pairs)</td>
+                <td colspan="3"></td>
+              </tr>
+            </tfoot>
+          </table>
+
+          <div class="total-section">
+            <div class="total-row">
+              <span>Bill Rate Total:</span>
+              <span>Rs. ${(saleRecord.rawTotal || saleRecord.total).toLocaleString()}</span>
+            </div>
+            ${saleRecord.discount > 0 ? `<div class="total-row" style="color: #dc2626;"><span>Discount Applied Later:</span><span>- Rs. ${saleRecord.discount.toLocaleString()}</span></div><div class="total-row net-amount"><span>Net Payable:</span><span>Rs. ${saleRecord.total.toLocaleString()}</span></div>` : ''}
+          </div>
+
+          <div class="signature-section">
+            <div class="sig-line">Prepared By</div>
+            <div class="sig-line">Receiver Signature</div>
+            <div class="sig-line">Authorized Stamp</div>
+          </div>
+
+          <div class="footer">
+            <p>Thank you for your business! Computer-generated invoice from PLUS EVR ERP System.</p>
+          </div>
+
+          <script>
+            window.onload = function() {
+              window.print();
+              window.close();
+            };
+          </script>
+        </body>
+      </html>
+    `)
+    printWindow.document.close()
+  }
+
+  const handleViewPdfBill = (saleRecord) => {
+    const printWindow = window.open('', '_blank', 'width=900,height=700')
+    const invoiceNumber = getInvoiceNumber(saleRecord)
+    const billItems = saleRecord.lineItems || []
+    const quantityTotals = billItems.reduce((totals, item) => {
+      const pairs = Number(item.pairs || 0) || (Number(item.qty || 0) * (item.unitType === 'pairs' ? 1 : 12))
+      const enteredQuantity = Number(item.qty)
+      const dozens = item.unitType === 'pairs'
+        ? pairs / 12
+        : (enteredQuantity > 0 ? enteredQuantity : pairs / 12)
+      return {
+        dozens: totals.dozens + (Number.isFinite(dozens) ? dozens : 0),
+        pairs: totals.pairs + (Number.isFinite(pairs) ? pairs : 0)
+      }
+    }, { dozens: 0, pairs: 0 })
+
+    const rowsHtml = saleRecord.lineItems && saleRecord.lineItems.length > 0 ? saleRecord.lineItems.map((item, idx) => {
+      const displayModel = item.model || item.description || 'Footwear Article';
+      const displaySize = item.size || 'N/A';
+      const pairCount = Number(item.pairs || 0);
+      const enteredQuantity = Number(item.qty);
+      const dozenQuantity = item.unitType === 'pairs'
+        ? pairCount / 12
+        : (enteredQuantity > 0 ? enteredQuantity : pairCount / 12);
+      const displayQty = dozenQuantity > 0
+        ? `${dozenQuantity.toLocaleString()} dozens (${pairCount.toLocaleString()} pairs)`
+        : '-';
+      const unitPriceNum = Number(item.price || item.netAmount || saleRecord.total || 0);
+      const lineTotal = Number(item.grossAmount || item.netAmount || saleRecord.total || 0);
+
+      return `
+        <tr>
+          <td style="text-align: center; width: 30px;">${idx + 1}</td>
+          <td style="text-align: center; width: 60px;">#${item.productId || 'N/A'}</td>
+          <td>${displayModel} (Size: ${displaySize})</td>
+          <td style="text-align: center; width: 110px;">${displayQty}</td>
+          <td style="text-align: right; width: 85px;">Rs. ${unitPriceNum.toLocaleString()}</td>
+          <td style="text-align: right; width: 110px; font-weight: bold;">Rs. ${lineTotal.toLocaleString()}</td>
+        </tr>
+      `;
+    }).join('') : `
+      <tr>
+        <td style="text-align: center;">1</td>
+        <td style="text-align: center;">#N/A</td>
+        <td>${saleRecord.items || 'General Wholesale Order'}</td>
+        <td style="text-align: center;">-</td>
+        <td style="text-align: right;">-</td>
+        <td style="text-align: right; font-weight: bold;">Rs. ${(saleRecord.rawTotal || saleRecord.total).toLocaleString()}</td>
+      </tr>
+    `;
+
+    printWindow.document.write(`
+      <html>
+        <head>
+          <title>Invoice ${invoiceNumber}</title>
+          <style>
+            body { font-family: 'Helvetica Neue', Arial, sans-serif; padding: 20px; color: #1e293b; background: #fff; margin: 0; font-size: 11px; }
+            .invoice-header { display: flex; justify-content: space-between; border-bottom: 2px solid #714B67; padding-bottom: 12px; margin-bottom: 15px; }
+            .company-name { font-size: 18px; font-weight: 800; text-transform: uppercase; color: #714B67; margin: 0; }
+            .company-sub { font-size: 10px; color: #64748b; }
+            .invoice-details { text-align: right; font-size: 11px; line-height: 1.25; }
+            .meta-grid { display: flex; justify-content: space-between; background: #f8fafc; border: 1px solid #e2e8f0; padding: 7px 9px; border-radius: 4px; margin-bottom: 9px; font-size: 11px; }
+            table { width: 100%; border-collapse: collapse; margin-bottom: 9px; }
+            th, td { border: 1px solid #cbd5e1; padding: 6px; font-size: 10px; line-height: 1.15; }
+            th { background-color: #f1f5f9; color: #334155; font-weight: 700; text-transform: uppercase; font-size: 11px; }
+            .total-section { width: 250px; margin-left: auto; background: #f8fafc; border: 1px solid #e2e8f0; padding: 7px 9px; border-radius: 4px; font-size: 11px; }
+            .total-row { display: flex; justify-content: space-between; margin-bottom: 3px; }
+            .net-amount { font-size: 13px; font-weight: 800; color: #16a34a; border-top: 1px solid #cbd5e1; padding-top: 4px; margin-top: 4px; }
+            .signature-section { margin-top: 18px; display: flex; justify-content: space-between; font-size: 10px; color: #475569; }
+            .sig-line { width: 160px; border-top: 1px solid #94a3b8; text-align: center; padding-top: 4px; }
+            .footer { margin-top: 10px; text-align: center; font-size: 9px; color: #94a3b8; border-top: 1px solid #e2e8f0; padding-top: 4px; }
+            .print-btn { display: block; width: 100%; max-width: 200px; margin: 20px auto 0 auto; background: #714B67; color: white; border: none; padding: 10px; border-radius: 6px; font-weight: bold; cursor: pointer; text-align: center; }
+            @media print { .print-btn { display: none; } body { padding: 0; } @page { size: A4 portrait; margin: 7mm; } }
+          </style>
+        </head>
+        <body>
+          <div class="invoice-header">
+            <div>
+              <h1 class="company-name">PLUS EVR ERP Factory</h1>
+              <div class="company-sub">Wholesale Footwear Manufacturing & Ledger</div>
+              <div class="company-sub">Lahore, Pakistan</div>
+            </div>
+            <div class="invoice-details">
+              <h3 style="margin: 0 0 4px 0; color: #1e293b;">WHOLESALE INVOICE</h3>
+              <div><strong>Invoice No:</strong> ${invoiceNumber}</div>
+              <div><strong>Date:</strong> ${saleRecord.date}</div>
+              <div><strong>Region:</strong> ${saleRecord.region || 'Punjab'}</div>
+            </div>
+          </div>
+
+          <div class="meta-grid">
+            <div><strong>Customer:</strong> <strong>${saleRecord.customer}</strong> (${saleRecord.customerId || 'N/A'})</div>
+            <div><strong>Transport:</strong> ${saleRecord.transportCompany || 'N/A'} | <strong>Builty No:</strong> ${saleRecord.builtyNo || 'N/A'}</div>
+          </div>
+
+          <table>
+            <thead>
+              <tr>
+                <th style="text-align: center;">#</th>
+                <th style="text-align: center;">Item No.</th>
+                <th>Description / Article Details</th>
+                <th style="text-align: center;">Quantity (Dozens)</th>
+                <th style="text-align: right;">Bill Rate/Pair</th>
+                <th style="text-align: right;">Bill Rate (PKR)</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${rowsHtml}
+            </tbody>
+            <tfoot>
+              <tr style="font-weight: 800; background-color: #f8fafc;">
+                <td colspan="3" style="text-align: right;">TOTAL QUANTITY:</td>
+                <td style="text-align: center;">${quantityTotals.dozens.toLocaleString()} dozens (${quantityTotals.pairs.toLocaleString()} pairs)</td>
+                <td colspan="3"></td>
+              </tr>
+            </tfoot>
+          </table>
+
+          <div class="total-section">
+            <div class="total-row"><span>Bill Rate Total:</span><span>Rs. ${(saleRecord.rawTotal || saleRecord.total).toLocaleString()}</span></div>
+            ${saleRecord.discount > 0 ? `<div class="total-row" style="color: #dc2626;"><span>Discount Applied Later:</span><span>- Rs. ${saleRecord.discount.toLocaleString()}</span></div><div class="total-row net-amount"><span>Net Payable:</span><span>Rs. ${saleRecord.total.toLocaleString()}</span></div>` : ''}
+          </div>
+
+          <div class="signature-section">
+            <div class="sig-line">Prepared By</div>
+            <div class="sig-line">Receiver Signature</div>
+            <div class="sig-line">Authorized Stamp</div>
+          </div>
+
           <button class="print-btn" onclick="window.print()">Print / Save PDF</button>
         </body>
       </html>
@@ -1131,8 +2171,8 @@ export default function App() {
 
     const encodedMessage = encodeURIComponent(message);
     const whatsappUrl = customerPhone
-      ? `https://api.whatsapp.com/send?phone=${customerPhone}&text=${encodedMessage}`
-      : `https://api.whatsapp.com/send?text=${encodedMessage}`;
+      ? `[https://api.whatsapp.com/send?phone=$](https://api.whatsapp.com/send?phone=$){customerPhone}&text=${encodedMessage}`
+      : `[https://api.whatsapp.com/send?text=$](https://api.whatsapp.com/send?text=$){encodedMessage}`;
 
     window.open(whatsappUrl, '_blank');
   };
@@ -1384,8 +2424,8 @@ export default function App() {
 
     const encodedMessage = encodeURIComponent(message);
     const whatsappUrl = customer.whatsapp
-      ? `https://api.whatsapp.com/send?phone=${customer.whatsapp}&text=${encodedMessage}`
-      : `https://api.whatsapp.com/send?text=${encodedMessage}`;
+      ? `[https://api.whatsapp.com/send?phone=$](https://api.whatsapp.com/send?phone=$){customer.whatsapp}&text=${encodedMessage}`
+      : `[https://api.whatsapp.com/send?text=$](https://api.whatsapp.com/send?text=$){encodedMessage}`;
 
     window.open(whatsappUrl, '_blank');
   };
@@ -1918,35 +2958,12 @@ export default function App() {
                               style={{ padding: '6px 8px', borderRadius: '4px', border: '1px solid #cbd5e1', width: '190px', fontSize: '13px' }}
                             />
                             <button
-  onClick={() => {
-    const amount = Number(typedAmount);
-    if (!amount || isNaN(amount) || amount <= 0) {
-      alert("Please enter a valid cash amount.");
-      return;
-    }
-
-    const newPaymentRecord = {
-      customerId: String(c.phone), // Explicitly string representation of the customer identifier
-      customer: String(c.name),
-      amount: Number(amount),
-      date: new Date().toISOString()
-    }
-
-    axios.post(`${API_BASE_URL}/api/payments`, newPaymentRecord, { headers: { Authorization: `Bearer ${token}` } })
-      .then(response => {
-        setPayments(prev => [...prev, response.data]);
-        setPaymentInputs({...paymentInputs, [c.id]: ''});
-        fetchAllData(); // Instantly syncs ledger and updates UI balances
-      })
-      .catch(err => {
-        console.error('Error saving payment:', err.response?.data || err);
-        alert('Failed to save payment: ' + JSON.stringify(err.response?.data?.errors || err.response?.data || 'Bad Request'));
-      })
-  }}
-  style={{ backgroundColor: '#16a34a', color: '#fff', border: 'none', padding: '7px 12px', borderRadius: '4px', cursor: 'pointer', fontWeight: '600', fontSize: '12px' }}
->
-  Save
-</button>
+                              type="button"
+                              onClick={() => handleUpdateCustomerDescription(c)}
+                              style={{ backgroundColor: '#2563eb', color: '#fff', border: 'none', padding: '7px 10px', borderRadius: '4px', cursor: 'pointer', fontWeight: '600', fontSize: '12px' }}
+                            >
+                              Save
+                            </button>
                           </div>
                         </td>
                         <td style={{ padding: '14px', color: '#475569', fontWeight: '600' }}>{c.region || 'Punjab'}</td>
@@ -1973,8 +2990,8 @@ export default function App() {
                                 }
 
                                 const newPaymentRecord = {
-                                  customerId: c.phone,
-                                  customer: c.name,
+                                  customerId: String(c.phone),
+                                  customer: String(c.name),
                                   amount: Number(amount),
                                   date: new Date().toISOString()
                                 }
@@ -1985,8 +3002,8 @@ export default function App() {
                                     fetchAllData();
                                   })
                                   .catch(err => {
-                                    console.error('Error saving payment:', err.response?.data || err)
-                                    alert('Failed to save payment: ' + JSON.stringify(err.response?.data || 'Bad Request'))
+                                    console.error('Error saving payment:', err.response?.data || err);
+                                    alert('Failed to save payment: ' + JSON.stringify(err.response?.data || 'Bad Request'));
                                   })
                               }}
                               style={{ backgroundColor: '#16a34a', color: '#fff', border: 'none', padding: '7px 12px', borderRadius: '4px', cursor: 'pointer', fontWeight: '600', fontSize: '12px' }}
@@ -2636,7 +3653,7 @@ export default function App() {
                   <span style={{ color: '#64748b', fontWeight: '600' }}>Stock in Dozens</span>
                   <span style={{ fontWeight: '700', color: stockTotals.totalDozens < 0 ? '#dc2626' : '#16a34a' }}>{stockTotals.totalDozens.toFixed(2)} Dozens</span>
                 </div>
-              </div>Save
+              </div>
               <div style={{ backgroundColor: '#f8fafc', padding: '20px', borderRadius: '8px', border: '1px solid #e2e8f0' }}>
                 <h3 style={{ color: '#dc2626', fontSize: '16px', fontWeight: '800', margin: '0 0 14px 0', borderBottom: '2px solid #e2e8f0', paddingBottom: '8px' }}>Liabilities & Capital</h3>
                 <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '14px', marginBottom: '10px' }}>
