@@ -298,11 +298,7 @@ export default function App() {
 
   // ============================================================
   // COMPUTED STOCK — true remaining = raw qty minus all sold pairs
-  // This makes oversold items show as NEGATIVE in the UI,
-  // even if the backend/DB clamps the stored qty at 0.
   // ============================================================
-
-  // Total sold pairs per product id, aggregated across every bill
   const totalSoldPairsByProduct = useMemo(() => {
     const map = {}
     sales.forEach(sale => {
@@ -318,22 +314,6 @@ export default function App() {
     return map
   }, [sales])
 
-  // Manual stock additions (via "+ Pairs" in inventory tab) — these are
-  // already baked into the DB qty, so we don't need to add them again.
-  // But when the DB clamps negatives to 0, we still need to subtract sold
-  // pairs on top of the raw qty. To detect clamping, we use this formula:
-  //
-  //   displayedStock = rawQty - soldPairsSinceClamp
-  //
-  // Since we can't know when the DB last clamped, we take the safer route:
-  //   displayedStock = rawQty - soldPairs
-  //
-  // and rely on the fact that when NOT clamped, rawQty already reflects
-  // the deduction. So we guard against double-counting by checking if
-  // rawQty is 0 while soldPairs > 0 — in that case we surface the deficit.
-  //
-  // Practical rule: if rawQty === 0 and soldPairs > 0, show -soldPairs
-  //                 otherwise show rawQty (already correct)
   const inventoryWithTrueStock = useMemo(() => {
     return inventory.map(item => {
       const rawQty = numberOrZero(item.qty)
@@ -341,13 +321,10 @@ export default function App() {
 
       let trueStock
       if (rawQty === 0 && sold > 0) {
-        // DB clamped it — surface the deficit
         trueStock = -sold
       } else if (rawQty < 0) {
-        // Backend stored negative — trust it
         trueStock = rawQty
       } else {
-        // Normal case — DB already deducted correctly
         trueStock = rawQty
       }
 
@@ -598,7 +575,7 @@ export default function App() {
     setCartItems(cartItems.filter((_, i) => i !== index))
   }
 
-  // === Stock Deduction — best-effort DB update. UI tracks true stock separately. ===
+  // === Stock Deduction — Always runs without blocking bill generation ===
   const deductStockFromInventory = async (lineItems) => {
     const headers = { Authorization: `Bearer ${token}` }
 
@@ -616,7 +593,7 @@ export default function App() {
       if (!current) return
 
       const currentQty = numberOrZero(current.qty)
-      const newQty = currentQty - soldPairs   // send negative if oversold
+      const newQty = currentQty - soldPairs // Allows negative stock when oversold
 
       const updated = {
         id: current.id,
@@ -692,7 +669,6 @@ export default function App() {
       const response = await axios.post(`${API_BASE_URL}/api/sales`, newRecord, { headers: { Authorization: `Bearer ${token}` } })
       const normalizedNewSale = normalizeSale(response.data)
 
-      // Optimistically update local sales so true-stock math recomputes immediately
       setSales(prevSales => [normalizedNewSale, ...prevSales])
 
       await deductStockFromInventory(evaluatedItems)
