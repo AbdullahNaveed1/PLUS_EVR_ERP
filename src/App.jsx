@@ -1953,13 +1953,23 @@ export default function App() {
                                   return;
                                 }
 
-                                const newPaymentRecord = {
-                                  id: Date.now(),
-                                  customerId: c.phone,
-                                  customer: c.name,
-                                  amount: amount,
-                                  date: new Date().toISOString().split('T')[0]
-                                }
+                              const newPaymentRecord = {
+  customerId: c.phone, // or c.id depending on your Customer model definition
+  customer: c.name,
+  amount: Number(amount),
+  date: new Date().toISOString()
+}
+
+axios.post(`${API_BASE_URL}/api/payments`, newPaymentRecord, { headers: { Authorization: `Bearer ${token}` } })
+  .then(response => {
+    setPayments(prev => [...prev, response.data]);
+    setPaymentInputs({...paymentInputs, [c.id]: ''});
+    fetchAllData(); // Instantly updates the ledger and balances
+  })
+  .catch(err => {
+    console.error('Error saving payment:', err.response?.data || err)
+    alert('Failed to save payment to the database.')
+  })
                                 axios.post(`${API_BASE_URL}/api/payments`, newPaymentRecord, { headers: { Authorization: `Bearer ${token}` } })
                                   .then(response => {
                                     setPayments(prev => [...prev, response.data]);
