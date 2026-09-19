@@ -537,6 +537,7 @@ export default function App() {
   }
 
   // === Stock Deduction Helper — deducts sold quantity from inventory in DB ===
+  // NOTE: Allows stock to go negative (no Math.max clamp) so deficits are tracked.
   const deductStockFromInventory = async (lineItems) => {
     const headers = { Authorization: `Bearer ${token}` }
 
@@ -555,7 +556,7 @@ export default function App() {
       if (!current) return
 
       const currentQty = numberOrZero(current.qty)
-      const newQty = Math.max(0, currentQty - soldPairs)
+      const newQty = currentQty - soldPairs   // allows negative stock
 
       const updated = {
         id: current.id,
@@ -579,22 +580,12 @@ export default function App() {
     await Promise.all(updates)
   }
 
+  // === Bill Generation — NO stock validation, bill always generates ===
   const handleGenerateMultiItemBill = async (e) => {
     e.preventDefault()
     if (!saleCustomerName || !saleCustomerUniqueId || cartItems.length === 0) return
 
-    // Validate stock availability BEFORE saving
-    for (const row of cartItems) {
-      const prod = inventory.find(p => p.id.toString() === row.productId?.toString())
-      if (!prod) continue
-      const multiplier = row.unitType === 'dozens' ? 12 : 1
-      const pairsRequested = Number(row.qty || 0) * multiplier
-      const available = numberOrZero(prod.qty)
-      if (pairsRequested > available) {
-        alert(`Not enough stock for ${prod.articleNumber || prod.model} (Size: ${prod.size || 'N/A'}).\nAvailable: ${available} pairs\nRequested: ${pairsRequested} pairs`)
-        return
-      }
-    }
+    // Stock availability is NOT checked — bills generate regardless of inventory levels.
 
     let grossTotal = 0;
 
@@ -644,7 +635,7 @@ export default function App() {
       const response = await axios.post(`${API_BASE_URL}/api/sales`, newRecord, { headers: { Authorization: `Bearer ${token}` } })
       setSales(prevSales => [normalizeSale(response.data), ...prevSales])
 
-      // === Deduct sold stock from inventory in DB ===
+      // Deduct sold stock from inventory in DB (can go negative)
       await deductStockFromInventory(evaluatedItems)
       await fetchAllData()  // refresh to show updated stock
     } catch (err) {
@@ -1634,13 +1625,15 @@ export default function App() {
                     const inputVal = updateStockInputs[item.id] || '';
                     const totalPairs = Number(item.qty || 0);
                     const dozensCount = (totalPairs / 12).toFixed(2);
+                    const isNegative = totalPairs < 0;
                     return (
                       <tr key={item.id} style={{ borderBottom: '1px solid #f1f5f9', fontSize: '14px' }}>
                         <td style={{ padding: '14px', fontWeight: '700', color: '#714B67' }}>#{item.id}</td>
                         <td style={{ padding: '14px', fontWeight: '700', color: '#0f172a' }}>{item.articleNumber || item.model}</td>
                         <td style={{ padding: '14px', color: '#475569' }}>{item.size || 'N/A'} | {item.color || 'N/A'}</td>
-                        <td style={{ padding: '14px', color: '#16a34a', fontWeight: '700' }}>
-                          {dozensCount} dozens <span style={{ fontSize: '12px', color: '#64748b', fontWeight: 'normal' }}>({totalPairs} pairs)</span>
+                        <td style={{ padding: '14px', color: isNegative ? '#dc2626' : '#16a34a', fontWeight: '700' }}>
+                          {dozensCount} dozens <span style={{ fontSize: '12px', color: isNegative ? '#dc2626' : '#64748b', fontWeight: 'normal' }}>({totalPairs} pairs)</span>
+                          {isNegative && <span style={{ marginLeft: '8px', fontSize: '11px', backgroundColor: '#fee2e2', color: '#dc2626', padding: '2px 6px', borderRadius: '4px', fontWeight: '700' }}>NEGATIVE</span>}
                         </td>
                         <td style={{ padding: '14px', color: '#0f172a', fontWeight: '600' }}>Rs. {(item.pricePunjab !== undefined && item.pricePunjab !== null ? item.pricePunjab : (item.price || 0)).toLocaleString()}</td>
                         <td style={{ padding: '14px', color: '#2563eb', fontWeight: '600' }}>Rs. {(item.priceSindh !== undefined && item.priceSindh !== null ? item.priceSindh : (item.price || 0)).toLocaleString()}</td>
@@ -1720,11 +1713,12 @@ export default function App() {
                 />
               </div>
 
-              <div style={{ backgroundColor: '#f0fdf4', border: '1px solid #bbf7d0', padding: '18px', borderRadius: '8px', marginBottom: '25px', maxWidth: '360px' }}>
-                <p style={{ margin: '0 0 5px 0', fontSize: '12px', fontWeight: '700', color: '#15803d' }}>GRAND TOTAL FACTORY STOCK</p>
-                <p style={{ margin: 0, fontSize: '24px', fontWeight: '800', color: '#16a34a' }}>
+              <div style={{ backgroundColor: filteredStockTotals.totalDozens < 0 ? '#fef2f2' : '#f0fdf4', border: filteredStockTotals.totalDozens < 0 ? '1px solid #fecaca' : '1px solid #bbf7d0', padding: '18px', borderRadius: '8px', marginBottom: '25px', maxWidth: '360px' }}>
+                <p style={{ margin: '0 0 5px 0', fontSize: '12px', fontWeight: '700', color: filteredStockTotals.totalDozens < 0 ? '#991b1b' : '#15803d' }}>GRAND TOTAL FACTORY STOCK</p>
+                <p style={{ margin: 0, fontSize: '24px', fontWeight: '800', color: filteredStockTotals.totalDozens < 0 ? '#dc2626' : '#16a34a' }}>
                   {filteredStockTotals.totalDozens.toFixed(2)} Dozens
                 </p>
+                <p style={{ margin: '4px 0 0 0', fontSize: '12px', color: '#64748b' }}>({filteredStockTotals.totalPairs.toLocaleString()} pairs)</p>
               </div>
 
               <div style={{ overflowX: 'auto' }}>
@@ -1744,12 +1738,16 @@ export default function App() {
                       filteredStockInventory.map(item => {
                         const pairs = Number(item.qty || 0);
                         const dozens = (pairs / 12).toFixed(2);
+                        const isNegative = pairs < 0;
                         return (
                           <tr key={item.id} style={{ borderBottom: '1px solid #f1f5f9', fontSize: '14px' }}>
                             <td style={{ padding: '12px', fontWeight: '700', color: '#714B67' }}>#{item.id}</td>
                             <td style={{ padding: '12px', fontWeight: '700', color: '#0f172a' }}>{item.articleNumber || item.model}</td>
                             <td style={{ padding: '12px', color: '#475569' }}>{item.size || 'N/A'} | {item.color || 'N/A'}</td>
-                            <td style={{ padding: '12px', fontWeight: '800', color: '#16a34a' }}>{dozens} Dozens</td>
+                            <td style={{ padding: '12px', fontWeight: '800', color: isNegative ? '#dc2626' : '#16a34a' }}>
+                              {dozens} Dozens
+                              {isNegative && <span style={{ marginLeft: '8px', fontSize: '11px', backgroundColor: '#fee2e2', color: '#dc2626', padding: '2px 6px', borderRadius: '4px', fontWeight: '700' }}>NEGATIVE</span>}
+                            </td>
                           </tr>
                         );
                       })
@@ -1801,6 +1799,7 @@ export default function App() {
                     inventory.map(item => {
                       const pairs = Number(item.qty || 0);
                       const dozens = (pairs / 12).toFixed(2);
+                      const isNegative = pairs < 0;
                       return (
                         <tr
                           key={item.id}
@@ -1810,8 +1809,8 @@ export default function App() {
                         >
                           <td style={{ padding: '12px', fontWeight: '700', color: '#0f172a' }}>#{item.id} - {item.articleNumber || item.model} / {item.model} ({item.size || 'N/A'}{item.color ? `, ${item.color}` : ''})</td>
                           <td style={{ padding: '12px' }}>
-                            <span style={{ padding: '4px 10px', borderRadius: '20px', fontSize: '12px', fontWeight: '700', backgroundColor: pairs > 0 ? '#dcfce7' : '#fee2e2', color: pairs > 0 ? '#15803d' : '#dc2626' }}>
-                              {pairs > 0 ? `${dozens} dozens (${pairs} pairs)` : 'Out of stock'}
+                            <span style={{ padding: '4px 10px', borderRadius: '20px', fontSize: '12px', fontWeight: '700', backgroundColor: isNegative ? '#fee2e2' : (pairs > 0 ? '#dcfce7' : '#fef3c7'), color: isNegative ? '#dc2626' : (pairs > 0 ? '#15803d' : '#92400e') }}>
+                              {isNegative ? `${dozens} dozens (${pairs} pairs) NEGATIVE` : (pairs > 0 ? `${dozens} dozens (${pairs} pairs)` : 'Out of stock')}
                             </span>
                           </td>
                           <td style={{ padding: '12px', fontWeight: '600', color: '#0f172a' }}>Rs. {(item.pricePunjab !== undefined && item.pricePunjab !== null ? item.pricePunjab : (item.price || 0)).toLocaleString()}</td>
@@ -2185,7 +2184,8 @@ export default function App() {
                           const p = getProductPrice(prod, newReg)
                           return { ...item, price: p }
                         }
-                        return item                      })
+                        return item
+                      })
                       setCartItems(updatedCart)
                     }}
                     style={{ padding: '10px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '14px', backgroundColor: '#fff', color: '#0f172a', width: '100%', boxSizing: 'border-box' }}
