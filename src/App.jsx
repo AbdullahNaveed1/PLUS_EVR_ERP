@@ -1918,12 +1918,35 @@ export default function App() {
                               style={{ padding: '6px 8px', borderRadius: '4px', border: '1px solid #cbd5e1', width: '190px', fontSize: '13px' }}
                             />
                             <button
-                              type="button"
-                              onClick={() => handleUpdateCustomerDescription(c)}
-                              style={{ backgroundColor: '#2563eb', color: '#fff', border: 'none', padding: '7px 10px', borderRadius: '4px', cursor: 'pointer', fontWeight: '600', fontSize: '12px' }}
-                            >
-                              Save
-                            </button>
+  onClick={() => {
+    const amount = Number(typedAmount);
+    if (!amount || isNaN(amount) || amount <= 0) {
+      alert("Please enter a valid cash amount.");
+      return;
+    }
+
+    const newPaymentRecord = {
+      customerId: String(c.phone), // Explicitly string representation of the customer identifier
+      customer: String(c.name),
+      amount: Number(amount),
+      date: new Date().toISOString()
+    }
+
+    axios.post(`${API_BASE_URL}/api/payments`, newPaymentRecord, { headers: { Authorization: `Bearer ${token}` } })
+      .then(response => {
+        setPayments(prev => [...prev, response.data]);
+        setPaymentInputs({...paymentInputs, [c.id]: ''});
+        fetchAllData(); // Instantly syncs ledger and updates UI balances
+      })
+      .catch(err => {
+        console.error('Error saving payment:', err.response?.data || err);
+        alert('Failed to save payment: ' + JSON.stringify(err.response?.data?.errors || err.response?.data || 'Bad Request'));
+      })
+  }}
+  style={{ backgroundColor: '#16a34a', color: '#fff', border: 'none', padding: '7px 12px', borderRadius: '4px', cursor: 'pointer', fontWeight: '600', fontSize: '12px' }}
+>
+  Save
+</button>
                           </div>
                         </td>
                         <td style={{ padding: '14px', color: '#475569', fontWeight: '600' }}>{c.region || 'Punjab'}</td>
@@ -2613,7 +2636,7 @@ export default function App() {
                   <span style={{ color: '#64748b', fontWeight: '600' }}>Stock in Dozens</span>
                   <span style={{ fontWeight: '700', color: stockTotals.totalDozens < 0 ? '#dc2626' : '#16a34a' }}>{stockTotals.totalDozens.toFixed(2)} Dozens</span>
                 </div>
-              </div>
+              </div>Save
               <div style={{ backgroundColor: '#f8fafc', padding: '20px', borderRadius: '8px', border: '1px solid #e2e8f0' }}>
                 <h3 style={{ color: '#dc2626', fontSize: '16px', fontWeight: '800', margin: '0 0 14px 0', borderBottom: '2px solid #e2e8f0', paddingBottom: '8px' }}>Liabilities & Capital</h3>
                 <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '14px', marginBottom: '10px' }}>
