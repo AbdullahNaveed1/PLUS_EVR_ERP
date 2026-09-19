@@ -1964,6 +1964,7 @@ export default function App() {
                                   .then(response => {
                                     setPayments(prev => [...prev, response.data]);
                                     setPaymentInputs({...paymentInputs, [c.id]: ''});
+                                    fetchAllData(); // Instantly syncs ledger and payments data
                                   })
                                   .catch(err => {
                                     console.error('Error saving payment:', err)
