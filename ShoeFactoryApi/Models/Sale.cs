@@ -1,3 +1,5 @@
+using System.ComponentModel.DataAnnotations.Schema;
+
 namespace ShoeFactoryApi.Models
 {
     public class Sale
@@ -12,6 +14,8 @@ namespace ShoeFactoryApi.Models
         public string TransportCompany { get; set; } = "N/A";
         public string BuiltyNo { get; set; } = "N/A";
         public DateTime Date { get; set; } = DateTime.UtcNow;
+
+        [Column(TypeName = "jsonb")]
         public string LineItemsJson { get; set; } = "[]";
     }
 }

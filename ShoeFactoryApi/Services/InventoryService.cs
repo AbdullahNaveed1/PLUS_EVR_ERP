@@ -1,49 +1,44 @@
 using Microsoft.EntityFrameworkCore;
 using ShoeFactoryApi.Data;
+using ShoeFactoryApi.Models;
 
 namespace ShoeFactoryApi.Services
 {
-    public interface IInventoryService
-    {
-        Task DeductStockAndLogTransactionAsync(int productId, int quantity, string referenceNumber);
-    }
-
     public class InventoryService : IInventoryService
     {
         private readonly FactoryDbContext _context;
+        private readonly ILogger<InventoryService> _logger;
 
-        public InventoryService(FactoryDbContext context)
+        public InventoryService(FactoryDbContext context, ILogger<InventoryService> logger)
         {
             _context = context;
+            _logger = logger;
         }
 
         public async Task DeductStockAndLogTransactionAsync(int productId, int quantity, string referenceNumber)
         {
-            var strategy = _context.Database.CreateExecutionStrategy();
+            if (quantity <= 0) throw new ArgumentException("Quantity must be positive.");
 
-            await strategy.ExecuteAsync(async () =>
+            using var tx = await _context.Database.BeginTransactionAsync();
+            try
             {
-                using var transaction = await _context.Database.BeginTransactionAsync();
-                try
-                {
-                    var product = await _context.Products.FindAsync(productId);
-                    if (product == null)
-                        throw new KeyNotFoundException($"Product with ID {productId} was not found.");
+                var product = await _context.Products.FirstOrDefaultAsync(p => p.Id == productId)
+                    ?? throw new InvalidOperationException($"Product {productId} not found.");
 
-                    if (product.Qty < quantity)
-                        throw new InvalidOperationException($"Insufficient stock for product model: {product.Model}");
+                // Live stock only — no sold-qty column exists
+                product.Qty -= quantity;
 
-                    product.Qty -= quantity;
+                await _context.SaveChangesAsync();
+                await tx.CommitAsync();
 
-                    await _context.SaveChangesAsync();
-                    await transaction.CommitAsync();
-                }
-                catch
-                {
-                    await transaction.RollbackAsync();
-                    throw;
-                }
-            });
+                _logger.LogInformation("Stock deducted: Product={ProductId} Qty={Qty} Ref={Ref}",
+                    productId, quantity, referenceNumber);
+            }
+            catch
+            {
+                await tx.RollbackAsync();
+                throw;
+            }
         }
     }
 }

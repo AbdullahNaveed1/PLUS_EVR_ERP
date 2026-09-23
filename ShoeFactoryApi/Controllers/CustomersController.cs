@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using ShoeFactoryApi.Data;
@@ -5,49 +6,32 @@ using ShoeFactoryApi.Models;
 
 namespace ShoeFactoryApi.Controllers
 {
+    [Authorize]
     [Route("api/[controller]")]
     [ApiController]
     public class CustomersController : ControllerBase
     {
         private readonly FactoryDbContext _context;
+        public CustomersController(FactoryDbContext context) => _context = context;
 
-        public CustomersController(FactoryDbContext context)
-        {
-            _context = context;
-        }
-
-        // GET: api/customers
         [HttpGet]
         public async Task<ActionResult<IEnumerable<Customer>>> GetCustomers()
-        {
-            return await _context.Customers.ToListAsync();
-        }
+            => await _context.Customers.ToListAsync();
 
-        // GET: api/customers/5
         [HttpGet("{id}")]
         public async Task<ActionResult<Customer>> GetCustomer(int id)
         {
             var customer = await _context.Customers.FindAsync(id);
-            if (customer == null) return NotFound();
-            return customer;
+            return customer == null ? NotFound() : customer;
         }
 
-        // GET: api/customers/by-phone/{phone}
         [HttpGet("by-phone/{phone}")]
         public async Task<ActionResult<Customer>> GetCustomerByPhone(string phone)
         {
-            // Note: If your Customer model uses 'PhoneNumber' instead of 'Phone', change c.Phone to c.PhoneNumber
             var customer = await _context.Customers.FirstOrDefaultAsync(c => c.Phone == phone);
-
-            if (customer == null)
-            {
-                return NotFound(new { message = "Customer not found" });
-            }
-
-            return customer;
+            return customer == null ? NotFound(new { message = "Customer not found" }) : customer;
         }
 
-        // POST: api/customers
         [HttpPost]
         public async Task<ActionResult<Customer>> PostCustomer(Customer customer)
         {
@@ -56,37 +40,32 @@ namespace ShoeFactoryApi.Controllers
             return CreatedAtAction(nameof(GetCustomer), new { id = customer.Id }, customer);
         }
 
-        // PUT: api/customers/5
+        // FIX #23 — targeted update; prevents balance/phone/name clobbering on description-only edits
         [HttpPut("{id}")]
         public async Task<IActionResult> PutCustomer(int id, Customer customer)
         {
             if (id != customer.Id) return BadRequest();
 
-            _context.Entry(customer).State = EntityState.Modified;
+            var existing = await _context.Customers.FirstOrDefaultAsync(c => c.Id == id);
+            if (existing == null) return NotFound();
 
-            try
-            {
-                await _context.SaveChangesAsync();
-            }
-            catch (DbUpdateConcurrencyException)
-            {
-                if (!_context.Customers.Any(e => e.Id == id)) return NotFound();
-                throw;
-            }
+            if (!string.IsNullOrWhiteSpace(customer.Name)) existing.Name = customer.Name;
+            if (!string.IsNullOrWhiteSpace(customer.Phone)) existing.Phone = customer.Phone;
+            if (!string.IsNullOrWhiteSpace(customer.Region)) existing.Region = customer.Region;
+            existing.Description = customer.Description;
+            existing.Balance = customer.Balance;
 
+            await _context.SaveChangesAsync();
             return NoContent();
         }
 
-        // DELETE: api/customers/5
         [HttpDelete("{id}")]
         public async Task<IActionResult> DeleteCustomer(int id)
         {
             var customer = await _context.Customers.FindAsync(id);
             if (customer == null) return NotFound();
-
             _context.Customers.Remove(customer);
             await _context.SaveChangesAsync();
-
             return NoContent();
         }
     }

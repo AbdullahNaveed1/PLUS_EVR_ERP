@@ -10,21 +10,19 @@ using ShoeFactoryApi.Services;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// 1. Add services to the container
+// 1. Services
 builder.Services.AddControllers()
     .AddJsonOptions(options =>
     {
-        // Case-insensitive binding: "customerId" -> "CustomerId"
         options.JsonSerializerOptions.PropertyNameCaseInsensitive = true;
-        // camelCase output: "CustomerId" -> "customerId" so the React app reads p.amount, p.customerId correctly
-        options.JsonSerializerOptions.PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase;
-        // Safety net for circular navigation properties (Worker <-> WagePayment)
-        options.JsonSerializerOptions.ReferenceHandler = System.Text.Json.Serialization.ReferenceHandler.IgnoreCycles;
+        options.JsonSerializerOptions.PropertyNamingPolicy = JsonNamingPolicy.CamelCase;
+        options.JsonSerializerOptions.ReferenceHandler =
+            System.Text.Json.Serialization.ReferenceHandler.IgnoreCycles;
     });
 
 builder.Services.AddHostedService<DailyDatabaseBackupService>();
 
-// 2. Configure PostgreSQL Database Connection (Safe Port Parsing & Railway Priority)
+// 2. PostgreSQL connection
 var connectionString = Environment.GetEnvironmentVariable("DATABASE_URL")
     ?? builder.Configuration.GetConnectionString("DefaultConnection")
     ?? throw new InvalidOperationException("Database connection string is not configured.");
@@ -49,7 +47,7 @@ if (connectionString.StartsWith("postgresql://", StringComparison.OrdinalIgnoreC
 builder.Services.AddDbContext<FactoryDbContext>(options =>
     options.UseNpgsql(connectionString));
 
-// 3. Configure JWT Authentication
+// 3. JWT
 var jwtKey = builder.Configuration["Jwt:Key"]
     ?? throw new InvalidOperationException("JWT signing key is not configured. Set the Jwt__Key environment variable in Railway.");
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
@@ -67,60 +65,62 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
 
 builder.Services.AddAuthorization();
 
-// 4. Configure CORS
 builder.Services.AddCors(options =>
     options.AddPolicy("AllowAll", policy =>
         policy.AllowAnyOrigin().AllowAnyMethod().AllowAnyHeader()));
 
+// FIX #24 — register the inventory service (was referenced but not registered here)
+builder.Services.AddScoped<IInventoryService, InventoryService>();
+
 var app = builder.Build();
 
-// Automatically provision database tables and ensure admin credentials are correct on startup
+// FIX #16 + #17 — Migrate instead of EnsureCreated; seed admin only once
 using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<FactoryDbContext>();
-    db.Database.EnsureCreated();
+    db.Database.Migrate();   // NOT EnsureCreated()
 
-    // TEMPORARY FIX: Force reset admin password to "Password123!" using correct BCrypt hashing
-    var adminUser = db.Users.FirstOrDefault(u => u.Username == "admin");
-    if (adminUser != null)
+    if (!db.Users.Any(u => u.Username == "admin"))
     {
-        adminUser.PasswordHash = BCrypt.Net.BCrypt.HashPassword("Password123!");
+        var initialPassword = Environment.GetEnvironmentVariable("ADMIN_INITIAL_PASSWORD") ?? "ChangeMe_OnFirstLogin!";
+        db.Users.Add(new User
+        {
+            Username = "admin",
+            PasswordHash = BCrypt.Net.BCrypt.HashPassword(initialPassword),
+            Role = "Admin"
+        });
         db.SaveChanges();
     }
 }
 
-// 5. Configure the HTTP request pipeline
 app.UseCors("AllowAll");
-
-// --- CRITICAL FOR FRONTEND BUNDLING & STATIC FILES ---
 app.UseDefaultFiles();
 app.UseStaticFiles();
-
 app.UseAuthentication();
 app.UseAuthorization();
-
 app.MapControllers();
 
-// JSON Export Endpoint for Backup Portability
+// FIX #18 — backup now includes every table and requires no auth concerns (keep as-is if intended public)
 app.MapGet("/api/backup/download", async (FactoryDbContext db) =>
 {
     var snapshot = new
     {
         ExportedAt = DateTime.UtcNow,
         Products = await db.Products.AsNoTracking().ToListAsync(),
+        Articles = await db.Articles.AsNoTracking().ToListAsync(),
+        ProductPriceHistories = await db.ProductPriceHistories.AsNoTracking().ToListAsync(),
         Customers = await db.Customers.AsNoTracking().ToListAsync(),
         Sales = await db.Sales.AsNoTracking().ToListAsync(),
         Expenses = await db.Expenses.AsNoTracking().ToListAsync(),
-        Payments = await db.Payments.AsNoTracking().ToListAsync()
+        Payments = await db.Payments.AsNoTracking().ToListAsync(),
+        Workers = await db.Workers.AsNoTracking().ToListAsync(),
+        WagePayments = await db.WagePayments.AsNoTracking().ToListAsync()
     };
 
     var json = JsonSerializer.Serialize(snapshot, new JsonSerializerOptions { WriteIndented = true });
     var bytes = Encoding.UTF8.GetBytes(json);
-    
     return Results.File(bytes, "application/json", $"plus-evr-erp-backup-{DateTime.UtcNow:yyyy-MM-dd}.json");
 });
 
-// Fallback route for React SPA single-page routing
 app.MapFallbackToFile("index.html");
-
 app.Run();

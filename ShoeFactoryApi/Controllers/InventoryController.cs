@@ -7,7 +7,7 @@ namespace ShoeFactoryApi.Controllers
 {
     [Route("api/[controller]")]
     [ApiController]
-    [Authorize] // Requires a valid JWT token for all endpoints
+    [Authorize]
     public class InventoryController : ControllerBase
     {
         private readonly IInventoryService _inventoryService;
@@ -20,24 +20,33 @@ namespace ShoeFactoryApi.Controllers
         }
 
         [HttpPost("deduct")]
-        [Authorize(Roles = "Admin,Manager")] // Enterprise security: Only Admins or Managers can deduct stock
+        [Authorize(Roles = "Admin,Manager")]
         public async Task<IActionResult> DeductStock([FromBody] StockDeductDto request)
         {
             if (request.Quantity <= 0)
-            {
                 return BadRequest(new { message = "Quantity must be greater than zero." });
-            }
 
             await _inventoryService.DeductStockAndLogTransactionAsync(
-                request.ProductId,
-                request.Quantity,
-                request.ReferenceNumber
-            );
+                request.ProductId, request.Quantity, request.ReferenceNumber);
 
-            _logger.LogInformation("Stock successfully deducted for Product ID {ProductId}, Quantity: {Quantity}",
-                request.ProductId, request.Quantity);
+            return Ok(new { message = "Stock updated atomically." });
+        }
 
-            return Ok(new { message = "Stock successfully updated and transaction logged atomically." });
+        // NEW — bulk endpoint for invoice deductions
+        [HttpPost("deduct-bulk")]
+        [Authorize(Roles = "Admin,Manager")]
+        public async Task<IActionResult> DeductBulk([FromBody] List<StockDeductDto> items)
+        {
+            if (items == null || items.Count == 0)
+                return BadRequest(new { message = "No items to deduct." });
+
+            foreach (var item in items)
+            {
+                if (item.Quantity <= 0) continue;
+                await _inventoryService.DeductStockAndLogTransactionAsync(
+                    item.ProductId, item.Quantity, item.ReferenceNumber);
+            }
+            return Ok(new { message = $"{items.Count} item(s) deducted." });
         }
     }
 }

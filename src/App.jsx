@@ -44,22 +44,23 @@ const parseLegacyDescription = description => {
   }
 }
 
+// FIX #4 — prefer explicit per-pair fields; never treat a total as per-pair
 const getDiscountPerPair = (item, discountTotal = 0, pairCount = 1) => {
-  const explicitDiscount = [
+  const explicitPerPair = [
     item.discountPerPair,
     item.discountRate,
     item.discount_per_pair,
-    item.pairDiscount,
-    item.discount
+    item.pairDiscount
   ].find(value => numberOrZero(value) > 0)
 
-  if (explicitDiscount !== undefined) return numberOrZero(explicitDiscount)
+  if (explicitPerPair !== undefined) return numberOrZero(explicitPerPair)
 
   const description = String(item.description || '')
-  const embeddedDiscount = description.match(/Disc(?:ount)?\s*:\s*([\d,]+(?:\.\d+)?)\s*Rs\.?\s*\/\s*pair/i)
-  if (embeddedDiscount) return numberOrZero(embeddedDiscount[1].replace(/,/g, ''))
+  const embedded = description.match(/Disc(?:ount)?\s*:\s*([\d,]+(?:\.\d+)?)\s*Rs\.?\s*\/\s*pair/i)
+  if (embedded) return numberOrZero(embedded[1].replace(/,/g, ''))
 
-  return pairCount > 0 ? numberOrZero(discountTotal) / pairCount : 0
+  const totalDiscount = numberOrZero(item.discount) || numberOrZero(discountTotal)
+  return pairCount > 0 ? totalDiscount / pairCount : 0
 }
 
 const normalizeSale = sale => {
@@ -114,10 +115,19 @@ const normalizeSale = sale => {
   const knownDiscount = items.reduce((total, item) => total + item.discountAmount, 0)
   const remainingDiscount = Math.max(0, saleDiscount - knownDiscount)
   const grossTotal = items.reduce((total, item) => total + item.grossAmount, 0)
+
+  // FIX #5 — allocate remaining sale-level discount to ALL items proportionally
   const normalizedItems = items.map(item => {
-    if (remainingDiscount <= 0 || item.discountAmount > 0) return item
-    const allocated = grossTotal > 0 ? remainingDiscount * (item.grossAmount / grossTotal) : remainingDiscount / items.length
-    return { ...item, discountAmount: allocated, discountPerPair: allocated / item.pairs, netAmount: item.grossAmount - allocated }
+    if (remainingDiscount <= 0) return item
+    const weight = grossTotal > 0 ? item.grossAmount / grossTotal : 1 / items.length
+    const allocated = remainingDiscount * weight
+    const newDiscount = item.discountAmount + allocated
+    return {
+      ...item,
+      discountAmount: newDiscount,
+      discountPerPair: item.pairs > 0 ? newDiscount / item.pairs : 0,
+      netAmount: item.grossAmount - newDiscount
+    }
   })
 
   return { ...sale, lineItems: normalizedItems, discount: saleDiscount || knownDiscount }
@@ -297,7 +307,7 @@ export default function App() {
   }
 
   // ============================================================
-  // COMPUTED STOCK — true remaining = raw qty minus all sold pairs
+  // COMPUTED STOCK
   // ============================================================
   const totalSoldPairsByProduct = useMemo(() => {
     const map = {}
@@ -314,21 +324,16 @@ export default function App() {
     return map
   }, [sales])
 
+  // FIX #1 — Product.Qty is live stock. Do NOT fabricate negatives.
   const inventoryWithTrueStock = useMemo(() => {
     return inventory.map(item => {
-      const rawQty = numberOrZero(item.qty)
-      const sold = numberOrZero(totalSoldPairsByProduct[String(item.id)])
-
-      let trueStock
-      if (rawQty === 0 && sold > 0) {
-        trueStock = -sold
-      } else if (rawQty < 0) {
-        trueStock = rawQty
-      } else {
-        trueStock = rawQty
+      const qty = numberOrZero(item.qty)
+      return {
+        ...item,
+        trueStock: qty,
+        rawQty: qty,
+        soldPairs: numberOrZero(totalSoldPairsByProduct[String(item.id)])
       }
-
-      return { ...item, trueStock, soldPairs: sold, rawQty }
     })
   }, [inventory, totalSoldPairsByProduct])
 
@@ -351,7 +356,11 @@ export default function App() {
   const totalExpenses = expenses.reduce((acc, ex) => acc + Number(ex.amount || 0), 0)
   const totalSalesRevenue = sales.reduce((acc, s) => acc + Number(s.total || 0), 0)
   const totalPaymentsReceived = payments.reduce((acc, p) => acc + Number(p.amount || 0), 0)
-  const netProfit = totalSalesRevenue - totalExpenses
+
+  // FIX #7 — include wages and tours in profit
+  const totalWages = wagePayments.reduce((acc, w) => acc + Number(w.amount || 0), 0)
+  const totalTours = tours.reduce((acc, t) => acc + Number(t.cost || 0), 0)
+  const netProfit = totalSalesRevenue - totalExpenses - totalWages - totalTours
 
   const inventoryByArticle = useMemo(() => {
     return inventoryWithTrueStock.reduce((groups, item) => {
@@ -362,13 +371,14 @@ export default function App() {
     }, {})
   }, [inventoryWithTrueStock])
 
+  // FIX #6 — guard against NaN balance
   const totalMarketDues = customers.reduce((acc, c) => {
-    const customerBills = sales.filter(s => s.customerId === c.phone);
-    const customerPayments = payments.filter(p => p.customerId === c.phone || p.customer === c.name);
-    const totalBilled = customerBills.reduce((bAcc, b) => bAcc + b.total, 0);
-    const totalPaid = customerPayments.reduce((pAcc, p) => pAcc + p.amount, 0);
-    return acc + (Number(c.balance) + totalBilled - totalPaid);
-  }, 0);
+    const customerBills = sales.filter(s => s.customerId === c.phone)
+    const customerPayments = payments.filter(p => p.customerId === c.phone || p.customer === c.name)
+    const totalBilled = customerBills.reduce((bAcc, b) => bAcc + numberOrZero(b.total), 0)
+    const totalPaid = customerPayments.reduce((pAcc, p) => pAcc + numberOrZero(p.amount), 0)
+    return acc + (numberOrZero(c.balance) + totalBilled - totalPaid)
+  }, 0)
 
   const handleAddInventory = async (e) => {
     e.preventDefault()
@@ -575,45 +585,34 @@ export default function App() {
     setCartItems(cartItems.filter((_, i) => i !== index))
   }
 
+  // FIX #2 — use the atomic backend endpoint instead of full-row PUTs.
   const deductStockFromInventory = async (lineItems) => {
     const headers = { Authorization: `Bearer ${token}` }
-
     const soldByProduct = {}
+
     for (const item of lineItems) {
       const pid = String(item.productId || '').trim()
       if (!pid || pid === 'N/A') continue
-      const soldPairs = numberOrZero(item.pairs) || (numberOrZero(item.qty) * (item.unitType === 'pairs' ? 1 : 12))
+      const soldPairs =
+        numberOrZero(item.pairs) ||
+        (numberOrZero(item.qty) * (item.unitType === 'pairs' ? 1 : 12))
       if (soldPairs <= 0) continue
       soldByProduct[pid] = (soldByProduct[pid] || 0) + soldPairs
     }
 
-    const updates = Object.entries(soldByProduct).map(async ([productId, soldPairs]) => {
-      const current = inventory.find(p => p.id.toString() === productId)
-      if (!current) return
+    const payload = Object.entries(soldByProduct).map(([productId, quantity]) => ({
+      productId: Number(productId),
+      quantity: Math.round(quantity),
+      referenceNumber: `SALE-${Date.now()}`
+    }))
 
-      const currentQty = numberOrZero(current.qty)
-      const newQty = currentQty - soldPairs
+    if (payload.length === 0) return
 
-      const updated = {
-        id: current.id,
-        articleNumber: current.articleNumber || current.model,
-        model: current.model,
-        size: current.size,
-        color: current.color,
-        qty: newQty,
-        price: Number(current.pricePunjab ?? current.price ?? 0),
-        pricePunjab: Number(current.pricePunjab ?? current.price ?? 0),
-        priceSindh: Number(current.priceSindh ?? current.price ?? 0)
-      }
-
-      try {
-        await axios.put(`${API_BASE_URL}/api/products/${current.id}`, updated, { headers })
-      } catch (err) {
-        console.error(`Failed to deduct stock for product ${productId}:`, err)
-      }
-    })
-
-    await Promise.all(updates)
+    try {
+      await axios.post(`${API_BASE_URL}/api/inventory/deduct-bulk`, payload, { headers })
+    } catch (err) {
+      console.error('Bulk stock deduction failed:', err)
+    }
   }
 
   const handleGenerateMultiItemBill = async (e) => {
@@ -1951,7 +1950,6 @@ export default function App() {
                                   return;
                                 }
 
-                                // FIX: no id (backend auto-generates). Full ISO date. camelCase keys.
                                 const newPaymentRecord = {
                                   customerId: c.phone,
                                   customer: c.name,
@@ -2034,8 +2032,18 @@ export default function App() {
                 const selectedCust = customers.find(c => c.id.toString() === reportCustId);
                 if (!selectedCust) return null;
 
-                const periodSales = sales.filter(s => s.customerId === selectedCust.phone && s.date >= reportStartDate && s.date <= reportEndDate);
-                const periodPayments = payments.filter(p => (p.customerId === selectedCust.phone || p.customer === selectedCust.name) && p.date >= reportStartDate && p.date <= reportEndDate);
+                // FIX #11 — normalize dates so same-day boundary and timezone don't break filtering
+                const startISO = reportStartDate
+                const endISO = reportEndDate
+                const periodSales = sales.filter(s => {
+                  const sd = String(s.date || '').split('T')[0]
+                  return s.customerId === selectedCust.phone && sd >= startISO && sd <= endISO
+                })
+                const periodPayments = payments.filter(p => {
+                  const pd = String(p.date || '').split('T')[0]
+                  return (p.customerId === selectedCust.phone || p.customer === selectedCust.name) &&
+                    pd >= startISO && pd <= endISO
+                })
 
                 const allTimeBills = sales.filter(s => s.customerId === selectedCust.phone).reduce((acc, b) => acc + b.total, 0);
                 const allTimePayments = payments.filter(p => p.customerId === selectedCust.phone || p.customer === selectedCust.name).reduce((acc, p) => acc + p.amount, 0);
@@ -2595,6 +2603,14 @@ export default function App() {
                 <span style={{ color: '#475569', fontWeight: '600' }}>Total Factory Expenses</span>
                 <span style={{ fontWeight: '800', color: '#dc2626' }}>- Rs. {totalExpenses.toLocaleString()}</span>
               </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', paddingBottom: '14px', borderBottom: '1px solid #f1f5f9' }}>
+                <span style={{ color: '#475569', fontWeight: '600' }}>Total Wages Paid</span>
+                <span style={{ fontWeight: '800', color: '#dc2626' }}>- Rs. {totalWages.toLocaleString()}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', paddingBottom: '14px', borderBottom: '1px solid #f1f5f9' }}>
+                <span style={{ color: '#475569', fontWeight: '600' }}>Total Tour Cost</span>
+                <span style={{ fontWeight: '800', color: '#dc2626' }}>- Rs. {totalTours.toLocaleString()}</span>
+              </div>
               <div style={{ display: 'flex', justifyContent: 'space-between', padding: '18px', backgroundColor: '#f8fafc', borderRadius: '8px', fontWeight: '800', fontSize: '18px', border: '1px solid #e2e8f0' }}>
                 <span style={{ color: '#1e293b' }}>Net Profit / (Loss)</span>
                 <span style={{ color: netProfit >= 0 ? '#16a34a' : '#dc2626' }}>Rs. {netProfit.toLocaleString()}</span>
@@ -2617,12 +2633,32 @@ export default function App() {
                   <span style={{ color: '#64748b', fontWeight: '600' }}>Stock in Dozens</span>
                   <span style={{ fontWeight: '700', color: stockTotals.totalDozens < 0 ? '#dc2626' : '#16a34a' }}>{stockTotals.totalDozens.toFixed(2)} Dozens</span>
                 </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '14px', marginBottom: '10px' }}>
+                  <span style={{ color: '#64748b', fontWeight: '600' }}>Market Receivable (Dues)</span>
+                  <span style={{ fontWeight: '700', color: '#dc2626' }}>Rs. {totalMarketDues.toLocaleString()}</span>
+                </div>
               </div>
               <div style={{ backgroundColor: '#f8fafc', padding: '20px', borderRadius: '8px', border: '1px solid #e2e8f0' }}>
                 <h3 style={{ color: '#dc2626', fontSize: '16px', fontWeight: '800', margin: '0 0 14px 0', borderBottom: '2px solid #e2e8f0', paddingBottom: '8px' }}>Liabilities & Capital</h3>
                 <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '14px', marginBottom: '10px' }}>
-                  <span style={{ color: '#64748b', fontWeight: '600' }}>Advances / Payables</span>
-                  <span style={{ fontWeight: '700', color: '#0f172a' }}>Rs. 5,000</span>
+                  <span style={{ color: '#64748b', fontWeight: '600' }}>Cash Received (Payments In)</span>
+                  <span style={{ fontWeight: '700', color: '#16a34a' }}>Rs. {totalPaymentsReceived.toLocaleString()}</span>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '14px', marginBottom: '10px' }}>
+                  <span style={{ color: '#64748b', fontWeight: '600' }}>Total Expenses</span>
+                  <span style={{ fontWeight: '700', color: '#dc2626' }}>Rs. {totalExpenses.toLocaleString()}</span>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '14px', marginBottom: '10px' }}>
+                  <span style={{ color: '#64748b', fontWeight: '600' }}>Total Wages Paid</span>
+                  <span style={{ fontWeight: '700', color: '#dc2626' }}>Rs. {totalWages.toLocaleString()}</span>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '14px', marginBottom: '10px' }}>
+                  <span style={{ color: '#64748b', fontWeight: '600' }}>Total Tour Cost</span>
+                  <span style={{ fontWeight: '700', color: '#dc2626' }}>Rs. {totalTours.toLocaleString()}</span>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '14px', borderTop: '1px solid #cbd5e1', paddingTop: '10px' }}>
+                  <span style={{ color: '#1e293b', fontWeight: '700' }}>Net Profit</span>
+                  <span style={{ fontWeight: '800', color: netProfit >= 0 ? '#16a34a' : '#dc2626' }}>Rs. {netProfit.toLocaleString()}</span>
                 </div>
               </div>
             </div>

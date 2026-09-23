@@ -7,40 +7,62 @@ namespace ShoeFactoryApi.Data
     {
         public FactoryDbContext(DbContextOptions<FactoryDbContext> options) : base(options) { }
 
-        public DbSet<Product> Products { get; set; }
-        public DbSet<Article> Articles { get; set; }
-        public DbSet<Customer> Customers { get; set; }
-        public DbSet<Expense> Expenses { get; set; }
-        public DbSet<User> Users { get; set; }
-        public DbSet<ProductPriceHistory> ProductPriceHistories { get; set; }
-        public DbSet<Worker> Workers { get; set; }
-        public DbSet<WagePayment> WagePayments { get; set; }
-        public DbSet<Sale> Sales { get; set; }
-        public DbSet<Payment> Payments { get; set; }
+        public DbSet<Product> Products => Set<Product>();
+        public DbSet<Article> Articles => Set<Article>();
+        public DbSet<ProductPriceHistory> ProductPriceHistories => Set<ProductPriceHistory>();
+        public DbSet<Customer> Customers => Set<Customer>();
+        public DbSet<Sale> Sales => Set<Sale>();
+        public DbSet<Expense> Expenses => Set<Expense>();
+        public DbSet<Payment> Payments => Set<Payment>();
+        public DbSet<Worker> Workers => Set<Worker>();
+        public DbSet<WagePayment> WagePayments => Set<WagePayment>();
+        public DbSet<User> Users => Set<User>();
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
-            modelBuilder.Entity<Article>()
-                .HasIndex(article => article.ArticleNumber)
-                .IsUnique();
+            base.OnModelCreating(modelBuilder);
 
+            // Product -> Article (optional)
             modelBuilder.Entity<Product>()
-                .HasOne(product => product.Article)
-                .WithMany(article => article.Variants)
-                .HasForeignKey(product => product.ArticleId)
+                .HasOne(p => p.Article)
+                .WithMany(a => a.Variants)
+                .HasForeignKey(p => p.ArticleId)
                 .OnDelete(DeleteBehavior.SetNull);
 
+            // FIX #26 — ProductPriceHistory cascade so DeleteProduct works
             modelBuilder.Entity<ProductPriceHistory>()
-                .HasOne(history => history.Product)
+                .HasOne(h => h.Product)
                 .WithMany()
-                .HasForeignKey(history => history.ProductId)
+                .HasForeignKey(h => h.ProductId)
                 .OnDelete(DeleteBehavior.Cascade);
 
+            // Worker -> WagePayment cascade
             modelBuilder.Entity<WagePayment>()
-                .HasOne(payment => payment.Worker)
-                .WithMany(worker => worker.WagePayments)
-                .HasForeignKey(payment => payment.WorkerId)
+                .HasOne(p => p.Worker)
+                .WithMany(w => w.WagePayments)
+                .HasForeignKey(p => p.WorkerId)
                 .OnDelete(DeleteBehavior.Cascade);
+
+            // FIX #27 — jsonb column for line items
+            modelBuilder.Entity<Sale>()
+                .Property(s => s.LineItemsJson)
+                .HasColumnType("jsonb");
+
+            // Money precision
+            modelBuilder.Entity<Product>().Property(p => p.PricePunjab).HasPrecision(18, 2);
+            modelBuilder.Entity<Product>().Property(p => p.PriceSindh).HasPrecision(18, 2);
+            modelBuilder.Entity<Sale>().Property(s => s.Total).HasPrecision(18, 2);
+            modelBuilder.Entity<Sale>().Property(s => s.RawTotal).HasPrecision(18, 2);
+            modelBuilder.Entity<Sale>().Property(s => s.Discount).HasPrecision(18, 2);
+            modelBuilder.Entity<Payment>().Property(p => p.Amount).HasPrecision(18, 2);
+            modelBuilder.Entity<Expense>().Property(e => e.Amount).HasPrecision(18, 2);
+            modelBuilder.Entity<WagePayment>().Property(p => p.Amount).HasPrecision(18, 2);
+            modelBuilder.Entity<Customer>().Property(c => c.Balance).HasPrecision(18, 2);
+
+            // FIX #25 — explicit phone linkage for customers
+            modelBuilder.Entity<Customer>()
+                .HasIndex(c => c.Phone)
+                .IsUnique(false);
         }
     }
 }
