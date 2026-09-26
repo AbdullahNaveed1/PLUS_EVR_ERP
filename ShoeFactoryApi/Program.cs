@@ -75,6 +75,8 @@ builder.Services.AddScoped<IInventoryService, InventoryService>();
 var app = builder.Build();
 
 // FIX #16 + #17 — Migrate instead of EnsureCreated; seed admin only once
+// NOTE: This block also applies any new migrations on startup, including the
+// three new tables (RawMaterials, ProductionRecords, BomEntries).
 using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<FactoryDbContext>();
@@ -114,7 +116,12 @@ app.MapGet("/api/backup/download", async (FactoryDbContext db) =>
         Expenses = await db.Expenses.AsNoTracking().ToListAsync(),
         Payments = await db.Payments.AsNoTracking().ToListAsync(),
         Workers = await db.Workers.AsNoTracking().ToListAsync(),
-        WagePayments = await db.WagePayments.AsNoTracking().ToListAsync()
+        WagePayments = await db.WagePayments.AsNoTracking().ToListAsync(),
+
+        // ===== NEW =====
+        RawMaterials = await db.RawMaterials.AsNoTracking().ToListAsync(),
+        ProductionRecords = await db.ProductionRecords.AsNoTracking().ToListAsync(),
+        BomEntries = await db.BomEntries.AsNoTracking().ToListAsync()
     };
 
     var json = JsonSerializer.Serialize(snapshot, new JsonSerializerOptions { WriteIndented = true });

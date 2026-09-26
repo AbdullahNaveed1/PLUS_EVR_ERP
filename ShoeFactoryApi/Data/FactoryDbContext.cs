@@ -18,6 +18,11 @@ namespace ShoeFactoryApi.Data
         public DbSet<WagePayment> WagePayments => Set<WagePayment>();
         public DbSet<User> Users => Set<User>();
 
+        // ===== NEW =====
+        public DbSet<RawMaterial> RawMaterials => Set<RawMaterial>();
+        public DbSet<ProductionRecord> ProductionRecords => Set<ProductionRecord>();
+        public DbSet<BomEntry> BomEntries => Set<BomEntry>();
+
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
             base.OnModelCreating(modelBuilder);
@@ -63,6 +68,38 @@ namespace ShoeFactoryApi.Data
             modelBuilder.Entity<Customer>()
                 .HasIndex(c => c.Phone)
                 .IsUnique(false);
+
+            // ===== NEW: Raw Material / Production / BOM configuration =====
+
+            // Cascade delete: removing a raw material removes its BOM entries
+            modelBuilder.Entity<BomEntry>()
+                .HasOne(b => b.RawMaterial)
+                .WithMany()
+                .HasForeignKey(b => b.RawMaterialId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            // Decimal precision (PostgreSQL-friendly)
+            modelBuilder.Entity<RawMaterial>()
+                .Property(m => m.UnitCost).HasPrecision(18, 4);
+
+            modelBuilder.Entity<RawMaterial>()
+                .Property(m => m.StockQty).HasPrecision(18, 4);
+
+            modelBuilder.Entity<ProductionRecord>()
+                .Property(p => p.Dozens).HasPrecision(18, 4);
+
+            modelBuilder.Entity<ProductionRecord>()
+                .Property(p => p.Pairs).HasPrecision(18, 4);
+
+            modelBuilder.Entity<BomEntry>()
+                .Property(b => b.QtyPerDozen).HasPrecision(18, 6);
+
+            // Useful index — lookups by article on production and BOM
+            modelBuilder.Entity<ProductionRecord>()
+                .HasIndex(p => p.ArticleNumber);
+
+            modelBuilder.Entity<BomEntry>()
+                .HasIndex(b => b.ArticleNumber);
         }
     }
 }
