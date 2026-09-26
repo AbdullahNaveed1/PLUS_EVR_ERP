@@ -44,7 +44,6 @@ const parseLegacyDescription = description => {
   }
 }
 
-// FIX #4 — prefer explicit per-pair fields; never treat a total as per-pair
 const getDiscountPerPair = (item, discountTotal = 0, pairCount = 1) => {
   const explicitPerPair = [
     item.discountPerPair,
@@ -116,7 +115,6 @@ const normalizeSale = sale => {
   const remainingDiscount = Math.max(0, saleDiscount - knownDiscount)
   const grossTotal = items.reduce((total, item) => total + item.grossAmount, 0)
 
-  // FIX #5 — allocate remaining sale-level discount to ALL items proportionally
   const normalizedItems = items.map(item => {
     if (remainingDiscount <= 0) return item
     const weight = grossTotal > 0 ? item.grossAmount / grossTotal : 1 / items.length
@@ -206,6 +204,28 @@ export default function App() {
   const [editSaleInputs, setEditSaleInputs] = useState({ transportCompany: '', builtyNo: '', discountPerPair: {} })
   const [selectedSaleIds, setSelectedSaleIds] = useState([])
 
+  // ===== NEW: Production / Raw Materials / BOM states =====
+  const [rawMaterials, setRawMaterials] = useState([])
+  const [productionRecords, setProductionRecords] = useState([])
+  const [bomEntries, setBomEntries] = useState([])
+
+  const [newRawMaterial, setNewRawMaterial] = useState({ name: '', unit: 'kg', unitCost: '', stockQty: '', notes: '' })
+  const [newProduction, setNewProduction] = useState({
+    date: new Date().toISOString().split('T')[0],
+    articleNumber: '',
+    dozens: '',
+    pairs: '',
+    notes: ''
+  })
+  const [newBom, setNewBom] = useState({ articleNumber: '', rawMaterialId: '', qtyPerDozen: '' })
+
+  const [editingRawMaterialId, setEditingRawMaterialId] = useState(null)
+  const [editRawMaterialInputs, setEditRawMaterialInputs] = useState({})
+  const [editingProductionId, setEditingProductionId] = useState(null)
+  const [editProductionInputs, setEditProductionInputs] = useState({})
+  const [editingBomId, setEditingBomId] = useState(null)
+  const [editBomInputs, setEditBomInputs] = useState({})
+
   const [stockReportSearch, setStockReportSearch] = useState('')
 
   const [reportCustId, setReportCustId] = useState('');
@@ -226,6 +246,8 @@ export default function App() {
     }
   }, [token])
 
+  const authHeaders = () => ({ Authorization: `Bearer ${token}` })
+
   const fetchAllData = async () => {
     setLoading(true)
     try {
@@ -237,9 +259,12 @@ export default function App() {
         axios.get(`${API_BASE_URL}/api/sales`, { headers }),
         axios.get(`${API_BASE_URL}/api/payments`, { headers })
       ])
-      const [workersRes, wagePaymentsRes] = await Promise.all([
+      const [workersRes, wagePaymentsRes, rawRes, prodRes2, bomRes] = await Promise.all([
         axios.get(`${API_BASE_URL}/api/wages/workers`, { headers }),
-        axios.get(`${API_BASE_URL}/api/wages/payments`, { headers })
+        axios.get(`${API_BASE_URL}/api/wages/payments`, { headers }),
+        axios.get(`${API_BASE_URL}/api/rawmaterials`, { headers }),
+        axios.get(`${API_BASE_URL}/api/production`, { headers }),
+        axios.get(`${API_BASE_URL}/api/bom`, { headers })
       ])
       await axios.get(`${API_BASE_URL}/api/articles`, { headers })
       setInventory(prodRes.data || [])
@@ -267,6 +292,12 @@ export default function App() {
       }
       setWorkers(workersRes.data || [])
       setWagePayments(wagePaymentsRes.data || [])
+      setRawMaterials(rawRes.data || [])
+      setProductionRecords((prodRes2.data || []).map(p => ({
+        ...p,
+        date: p.date ? String(p.date).split('T')[0] : ''
+      })))
+      setBomEntries(bomRes.data || [])
     } catch (error) {
       console.error("Failed to fetch data or unauthorized:", error)
       if (error.response?.status === 401) {
@@ -306,9 +337,6 @@ export default function App() {
     setUsername(null)
   }
 
-  // ============================================================
-  // COMPUTED STOCK
-  // ============================================================
   const totalSoldPairsByProduct = useMemo(() => {
     const map = {}
     sales.forEach(sale => {
@@ -324,7 +352,6 @@ export default function App() {
     return map
   }, [sales])
 
-  // FIX #1 — Product.Qty is live stock. Do NOT fabricate negatives.
   const inventoryWithTrueStock = useMemo(() => {
     return inventory.map(item => {
       const qty = numberOrZero(item.qty)
@@ -357,10 +384,45 @@ export default function App() {
   const totalSalesRevenue = sales.reduce((acc, s) => acc + Number(s.total || 0), 0)
   const totalPaymentsReceived = payments.reduce((acc, p) => acc + Number(p.amount || 0), 0)
 
-  // FIX #7 — include wages and tours in profit
   const totalWages = wagePayments.reduce((acc, w) => acc + Number(w.amount || 0), 0)
   const totalTours = tours.reduce((acc, t) => acc + Number(t.cost || 0), 0)
   const netProfit = totalSalesRevenue - totalExpenses - totalWages - totalTours
+
+  // ===== NEW: Production & Raw Material computations =====
+  const totalRawMaterialStockValue = useMemo(() => {
+    return rawMaterials.reduce((sum, m) => sum + numberOrZero(m.stockQty) * numberOrZero(m.unitCost), 0)
+  }, [rawMaterials])
+
+  const totalDozensProduced = useMemo(() => {
+    return productionRecords.reduce((sum, p) => {
+      const dozens = numberOrZero(p.dozens) + (numberOrZero(p.pairs) / 12)
+      return sum + dozens
+    }, 0)
+  }, [productionRecords])
+
+  const totalPairsProduced = totalDozensProduced * 12
+
+  const costPerDozenByArticle = useMemo(() => {
+    const map = {}
+    bomEntries.forEach(entry => {
+      const material = rawMaterials.find(m => String(m.id) === String(entry.rawMaterialId))
+      if (!material) return
+      const cost = numberOrZero(entry.qtyPerDozen) * numberOrZero(material.unitCost)
+      map[entry.articleNumber] = (map[entry.articleNumber] || 0) + cost
+    })
+    return map
+  }, [bomEntries, rawMaterials])
+
+  const totalProductionRawMaterialCost = useMemo(() => {
+    return productionRecords.reduce((sum, p) => {
+      const dozenCost = costPerDozenByArticle[p.articleNumber] || 0
+      const dozens = numberOrZero(p.dozens) + (numberOrZero(p.pairs) / 12)
+      return sum + (dozens * dozenCost)
+    }, 0)
+  }, [productionRecords, costPerDozenByArticle])
+
+  const averageCostPerDozen = totalDozensProduced > 0 ? totalProductionRawMaterialCost / totalDozensProduced : 0
+  const averageCostPerPair = averageCostPerDozen / 12
 
   const inventoryByArticle = useMemo(() => {
     return inventoryWithTrueStock.reduce((groups, item) => {
@@ -371,7 +433,6 @@ export default function App() {
     }, {})
   }, [inventoryWithTrueStock])
 
-  // FIX #6 — guard against NaN balance
   const totalMarketDues = customers.reduce((acc, c) => {
     const customerBills = sales.filter(s => s.customerId === c.phone)
     const customerPayments = payments.filter(p => p.customerId === c.phone || p.customer === c.name)
@@ -393,7 +454,7 @@ export default function App() {
         price: Number(newItem.pricePunjab),
         pricePunjab: Number(newItem.pricePunjab),
         priceSindh: Number(newItem.priceSindh)
-      }, { headers: { Authorization: `Bearer ${token}` } })
+      }, { headers: authHeaders() })
 
       setNewItem({ articleNumber: '', model: '', size: '', color: '', qty: '', pricePunjab: '', priceSindh: '' })
       fetchAllData()
@@ -405,7 +466,7 @@ export default function App() {
   const handleCreateParentArticle = async () => {
     if (!newItem.articleNumber) return
     try {
-      await axios.post(`${API_BASE_URL}/api/articles`, { articleNumber: newItem.articleNumber }, { headers: { Authorization: `Bearer ${token}` } })
+      await axios.post(`${API_BASE_URL}/api/articles`, { articleNumber: newItem.articleNumber }, { headers: authHeaders() })
       fetchAllData()
     } catch (err) {
       alert(err.response?.data || 'Article already exists or could not be created.')
@@ -431,8 +492,7 @@ export default function App() {
         pricePunjab: Number(item.pricePunjab ?? item.price ?? 0),
         priceSindh: Number(item.priceSindh ?? item.price ?? 0)
       }
-      const headers = { Authorization: `Bearer ${token}` }
-      await axios.put(`${API_BASE_URL}/api/products/${item.id}`, updatedProduct, { headers })
+      await axios.put(`${API_BASE_URL}/api/products/${item.id}`, updatedProduct, { headers: authHeaders() })
 
       setUpdateStockInputs({ ...updateStockInputs, [item.id]: '' })
       fetchAllData()
@@ -446,7 +506,6 @@ export default function App() {
     const priceInputs = updatePriceInputs[item.id] || {}
     if (priceInputs.punjab === undefined && priceInputs.sindh === undefined) return
     try {
-      const headers = { Authorization: `Bearer ${token}` }
       await axios.put(`${API_BASE_URL}/api/products/${item.id}`, {
         id: item.id,
         articleNumber: item.articleNumber || item.model,
@@ -456,7 +515,7 @@ export default function App() {
         qty: Number(item.rawQty || item.qty || 0),
         pricePunjab: Number(priceInputs.punjab ?? item.pricePunjab ?? item.price ?? 0),
         priceSindh: Number(priceInputs.sindh ?? item.priceSindh ?? item.price ?? 0)
-      }, { headers })
+      }, { headers: authHeaders() })
       setUpdatePriceInputs({ ...updatePriceInputs, [item.id]: {} })
       fetchAllData()
     } catch (err) {
@@ -468,7 +527,7 @@ export default function App() {
   const handleAddWorker = async (e) => {
     e.preventDefault()
     if (!newWorker.name) return
-    await axios.post(`${API_BASE_URL}/api/wages/workers`, newWorker, { headers: { Authorization: `Bearer ${token}` } })
+    await axios.post(`${API_BASE_URL}/api/wages/workers`, newWorker, { headers: authHeaders() })
     setNewWorker({ name: '', phone: '', role: '' })
     fetchAllData()
   }
@@ -481,7 +540,7 @@ export default function App() {
       amount: Number(newWagePayment.amount),
       paymentDate: new Date(newWagePayment.paymentDate).toISOString(),
       notes: newWagePayment.notes
-    }, { headers: { Authorization: `Bearer ${token}` } })
+    }, { headers: authHeaders() })
     setNewWagePayment({ workerId: '', amount: '', paymentDate: new Date().toISOString().split('T')[0], notes: '' })
     fetchAllData()
   }
@@ -489,8 +548,7 @@ export default function App() {
   const handleDeleteProduct = async (id) => {
     if (!window.confirm("Are you sure you want to delete this product from stock?")) return;
     try {
-      const headers = { Authorization: `Bearer ${token}` };
-      await axios.delete(`${API_BASE_URL}/api/products/${id}`, { headers });
+      await axios.delete(`${API_BASE_URL}/api/products/${id}`, { headers: authHeaders() });
       fetchAllData();
     } catch (err) {
       console.error("Error deleting product:", err);
@@ -509,7 +567,7 @@ export default function App() {
         description: newCust.description?.trim() || null,
         region: newCust.region,
         balance: Number(newCust.balance || 0)
-      }, { headers: { Authorization: `Bearer ${token}` } })
+      }, { headers: authHeaders() })
 
       setNewCust({ name: '', description: null, region: 'Punjab', balance: '' })
       fetchAllData()
@@ -524,7 +582,7 @@ export default function App() {
       await axios.put(`${API_BASE_URL}/api/customers/${customer.id}`, {
         ...customer,
         description
-      }, { headers: { Authorization: `Bearer ${token}` } })
+      }, { headers: authHeaders() })
       setCustomerDescriptionInputs({ ...customerDescriptionInputs, [customer.id]: description || '' })
       fetchAllData()
     } catch (err) {
@@ -542,7 +600,7 @@ export default function App() {
         amount: Number(newExp.amount),
         notes: newExp.notes || '',
         date: new Date(newExp.date).toISOString()
-      }, { headers: { Authorization: `Bearer ${token}` } })
+      }, { headers: authHeaders() })
 
       setNewExp({ category: '', amount: '', notes: '', date: new Date().toISOString().split('T')[0] })
       fetchAllData()
@@ -585,9 +643,7 @@ export default function App() {
     setCartItems(cartItems.filter((_, i) => i !== index))
   }
 
-  // FIX #2 — use the atomic backend endpoint instead of full-row PUTs.
   const deductStockFromInventory = async (lineItems) => {
-    const headers = { Authorization: `Bearer ${token}` }
     const soldByProduct = {}
 
     for (const item of lineItems) {
@@ -609,7 +665,7 @@ export default function App() {
     if (payload.length === 0) return
 
     try {
-      await axios.post(`${API_BASE_URL}/api/inventory/deduct-bulk`, payload, { headers })
+      await axios.post(`${API_BASE_URL}/api/inventory/deduct-bulk`, payload, { headers: authHeaders() })
     } catch (err) {
       console.error('Bulk stock deduction failed:', err)
     }
@@ -663,7 +719,7 @@ export default function App() {
     }
 
     try {
-      const response = await axios.post(`${API_BASE_URL}/api/sales`, newRecord, { headers: { Authorization: `Bearer ${token}` } })
+      const response = await axios.post(`${API_BASE_URL}/api/sales`, newRecord, { headers: authHeaders() })
       const normalizedNewSale = normalizeSale(response.data)
 
       setSales(prevSales => [normalizedNewSale, ...prevSales])
@@ -718,7 +774,7 @@ export default function App() {
     });
     const updatedSale = updatedSales.find(s => s.id === saleId)
     try {
-      await axios.put(`${API_BASE_URL}/api/sales/${saleId}`, updatedSale, { headers: { Authorization: `Bearer ${token}` } })
+      await axios.put(`${API_BASE_URL}/api/sales/${saleId}`, updatedSale, { headers: authHeaders() })
       setSales(updatedSales.map(normalizeSale))
       setEditingSaleId(null)
     } catch (err) {
@@ -738,7 +794,7 @@ export default function App() {
     if (!confirmed) return
 
     try {
-      await Promise.all(selectedBills.map(sale => axios.delete(`${API_BASE_URL}/api/sales/${sale.id}`, { headers: { Authorization: `Bearer ${token}` } })))
+      await Promise.all(selectedBills.map(sale => axios.delete(`${API_BASE_URL}/api/sales/${sale.id}`, { headers: authHeaders() })))
       setSales(currentSales => currentSales.filter(sale => !selectedSaleIds.includes(sale.id)))
       setSelectedSaleIds([])
     } catch (err) {
@@ -1391,6 +1447,174 @@ export default function App() {
     window.open(whatsappUrl, '_blank');
   };
 
+  // ===== NEW: Raw Materials CRUD handlers (backend-backed) =====
+  const handleAddRawMaterial = async (e) => {
+    e.preventDefault()
+    if (!newRawMaterial.name || newRawMaterial.unitCost === '') return
+    try {
+      const res = await axios.post(`${API_BASE_URL}/api/rawmaterials`, {
+        name: newRawMaterial.name.trim(),
+        unit: (newRawMaterial.unit || 'unit').trim(),
+        unitCost: Number(newRawMaterial.unitCost) || 0,
+        stockQty: Number(newRawMaterial.stockQty) || 0,
+        notes: newRawMaterial.notes || ''
+      }, { headers: authHeaders() })
+      setRawMaterials(prev => [res.data, ...prev])
+      setNewRawMaterial({ name: '', unit: 'kg', unitCost: '', stockQty: '', notes: '' })
+    } catch (err) {
+      console.error('Add raw material failed:', err)
+      alert('Failed to save raw material.')
+    }
+  }
+
+  const handleUpdateRawMaterial = async (id) => {
+    const inputs = editRawMaterialInputs[id] || {}
+    const existing = rawMaterials.find(m => m.id === id)
+    if (!existing) return
+    const payload = {
+      name: inputs.name !== undefined ? inputs.name : existing.name,
+      unit: inputs.unit !== undefined ? inputs.unit : existing.unit,
+      unitCost: inputs.unitCost !== undefined ? Number(inputs.unitCost) : existing.unitCost,
+      stockQty: inputs.stockQty !== undefined ? Number(inputs.stockQty) : existing.stockQty,
+      notes: inputs.notes !== undefined ? inputs.notes : existing.notes
+    }
+    try {
+      const res = await axios.put(`${API_BASE_URL}/api/rawmaterials/${id}`, payload, { headers: authHeaders() })
+      setRawMaterials(prev => prev.map(m => m.id === id ? res.data : m))
+      setEditingRawMaterialId(null)
+      setEditRawMaterialInputs(prev => ({ ...prev, [id]: {} }))
+    } catch (err) {
+      console.error('Update raw material failed:', err)
+      alert('Failed to update raw material.')
+    }
+  }
+
+  const handleDeleteRawMaterial = async (id) => {
+    if (!window.confirm('Delete this raw material? Any BOM entries using it will also be removed.')) return
+    try {
+      await axios.delete(`${API_BASE_URL}/api/rawmaterials/${id}`, { headers: authHeaders() })
+      setRawMaterials(prev => prev.filter(m => m.id !== id))
+      setBomEntries(prev => prev.filter(b => String(b.rawMaterialId) !== String(id)))
+    } catch (err) {
+      console.error('Delete raw material failed:', err)
+      alert('Failed to delete raw material.')
+    }
+  }
+
+  // ===== NEW: Production CRUD handlers (backend-backed) =====
+  const handleAddProduction = async (e) => {
+    e.preventDefault()
+    if (!newProduction.articleNumber) return
+    const dozens = Number(newProduction.dozens) || 0
+    const pairs = Number(newProduction.pairs) || 0
+    if (dozens <= 0 && pairs <= 0) { alert('Enter quantity in dozens and/or pairs.'); return }
+    try {
+      const res = await axios.post(`${API_BASE_URL}/api/production`, {
+        date: newProduction.date || new Date().toISOString().split('T')[0],
+        articleNumber: newProduction.articleNumber.trim(),
+        dozens,
+        pairs,
+        notes: newProduction.notes || ''
+      }, { headers: authHeaders() })
+      setProductionRecords(prev => [{
+        ...res.data,
+        date: res.data.date ? String(res.data.date).split('T')[0] : newProduction.date
+      }, ...prev])
+      setNewProduction({
+        date: new Date().toISOString().split('T')[0],
+        articleNumber: '', dozens: '', pairs: '', notes: ''
+      })
+    } catch (err) {
+      console.error('Add production failed:', err)
+      alert('Failed to save production record.')
+    }
+  }
+
+  const handleUpdateProduction = async (id) => {
+    const inputs = editProductionInputs[id] || {}
+    const existing = productionRecords.find(p => p.id === id)
+    if (!existing) return
+    const payload = {
+      date: inputs.date !== undefined ? inputs.date : existing.date,
+      articleNumber: inputs.articleNumber !== undefined ? inputs.articleNumber : existing.articleNumber,
+      dozens: inputs.dozens !== undefined ? Number(inputs.dozens) || 0 : existing.dozens,
+      pairs: inputs.pairs !== undefined ? Number(inputs.pairs) || 0 : existing.pairs,
+      notes: inputs.notes !== undefined ? inputs.notes : existing.notes
+    }
+    try {
+      const res = await axios.put(`${API_BASE_URL}/api/production/${id}`, payload, { headers: authHeaders() })
+      setProductionRecords(prev => prev.map(p => p.id === id ? {
+        ...res.data,
+        date: res.data.date ? String(res.data.date).split('T')[0] : payload.date
+      } : p))
+      setEditingProductionId(null)
+      setEditProductionInputs(prev => ({ ...prev, [id]: {} }))
+    } catch (err) {
+      console.error('Update production failed:', err)
+      alert('Failed to update production record.')
+    }
+  }
+
+  const handleDeleteProduction = async (id) => {
+    if (!window.confirm('Delete this production record?')) return
+    try {
+      await axios.delete(`${API_BASE_URL}/api/production/${id}`, { headers: authHeaders() })
+      setProductionRecords(prev => prev.filter(p => p.id !== id))
+    } catch (err) {
+      console.error('Delete production failed:', err)
+      alert('Failed to delete production record.')
+    }
+  }
+
+  // ===== NEW: BOM CRUD handlers (backend-backed) =====
+  const handleAddBom = async (e) => {
+    e.preventDefault()
+    if (!newBom.articleNumber || !newBom.rawMaterialId || newBom.qtyPerDozen === '') return
+    try {
+      const res = await axios.post(`${API_BASE_URL}/api/bom`, {
+        articleNumber: newBom.articleNumber.trim(),
+        rawMaterialId: Number(newBom.rawMaterialId),
+        qtyPerDozen: Number(newBom.qtyPerDozen) || 0
+      }, { headers: authHeaders() })
+      setBomEntries(prev => [res.data, ...prev])
+      setNewBom({ articleNumber: '', rawMaterialId: '', qtyPerDozen: '' })
+    } catch (err) {
+      console.error('Add BOM failed:', err)
+      alert('Failed to save BOM entry.')
+    }
+  }
+
+  const handleUpdateBom = async (id) => {
+    const inputs = editBomInputs[id] || {}
+    const existing = bomEntries.find(b => b.id === id)
+    if (!existing) return
+    const payload = {
+      articleNumber: inputs.articleNumber !== undefined ? inputs.articleNumber : existing.articleNumber,
+      rawMaterialId: inputs.rawMaterialId !== undefined ? Number(inputs.rawMaterialId) : existing.rawMaterialId,
+      qtyPerDozen: inputs.qtyPerDozen !== undefined ? Number(inputs.qtyPerDozen) || 0 : existing.qtyPerDozen
+    }
+    try {
+      const res = await axios.put(`${API_BASE_URL}/api/bom/${id}`, payload, { headers: authHeaders() })
+      setBomEntries(prev => prev.map(b => b.id === id ? res.data : b))
+      setEditingBomId(null)
+      setEditBomInputs(prev => ({ ...prev, [id]: {} }))
+    } catch (err) {
+      console.error('Update BOM failed:', err)
+      alert('Failed to update BOM entry.')
+    }
+  }
+
+  const handleDeleteBom = async (id) => {
+    if (!window.confirm('Remove this BOM entry?')) return
+    try {
+      await axios.delete(`${API_BASE_URL}/api/bom/${id}`, { headers: authHeaders() })
+      setBomEntries(prev => prev.filter(b => b.id !== id))
+    } catch (err) {
+      console.error('Delete BOM failed:', err)
+      alert('Failed to delete BOM entry.')
+    }
+  }
+
   const tabs = [
     { id: 'dashboard', label: 'Dashboard' },
     { id: 'inventory', label: 'Stock & Pricing' },
@@ -1398,6 +1622,9 @@ export default function App() {
     { id: 'search', label: '🔍 Search Article' },
     { id: 'customers', label: 'Khata & Ledger' },
     { id: 'sales', label: 'Billing' },
+    { id: 'production', label: '🏭 Production' },
+    { id: 'rawmaterials', label: '🧱 Raw Materials' },
+    { id: 'costing', label: '💰 Costing / BOM' },
     { id: 'reports', label: '📊 گاہک کی رپورٹ (Reports)' },
     { id: 'expenses', label: 'Expenses' },
     { id: 'wages', label: 'Daily Wages' },
@@ -1957,7 +2184,7 @@ export default function App() {
                                   date: new Date().toISOString()
                                 };
 
-                                axios.post(`${API_BASE_URL}/api/payments`, newPaymentRecord, { headers: { Authorization: `Bearer ${token}` } })
+                                axios.post(`${API_BASE_URL}/api/payments`, newPaymentRecord, { headers: authHeaders() })
                                   .then(response => {
                                     setPayments(prev => [...prev, response.data]);
                                     setPaymentInputs({...paymentInputs, [c.id]: ''});
@@ -2032,7 +2259,6 @@ export default function App() {
                 const selectedCust = customers.find(c => c.id.toString() === reportCustId);
                 if (!selectedCust) return null;
 
-                // FIX #11 — normalize dates so same-day boundary and timezone don't break filtering
                 const startISO = reportStartDate
                 const endISO = reportEndDate
                 const periodSales = sales.filter(s => {
@@ -2486,6 +2712,371 @@ export default function App() {
           </div>
         )}
 
+        {/* ============================== Production tab ============================== */}
+        {activeTab === 'production' && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
+              <h2 style={{ margin: 0, fontSize: '18px', fontWeight: '700', color: '#1e293b' }}>🏭 Daily Production Log</h2>
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '12px' }}>
+              <div style={{ backgroundColor: '#eff6ff', border: '1px solid #bfdbfe', padding: '16px 18px', borderRadius: '8px' }}>
+                <p style={{ margin: 0, fontSize: '11px', fontWeight: '700', color: '#1d4ed8', letterSpacing: '0.5px' }}>TOTAL DOZENS PRODUCED</p>
+                <p style={{ margin: '4px 0 0 0', fontSize: '22px', fontWeight: '800', color: '#2563eb' }}>{totalDozensProduced.toFixed(2)} Dozens</p>
+                <p style={{ margin: '2px 0 0 0', fontSize: '12px', color: '#64748b' }}>({totalPairsProduced.toLocaleString()} pairs)</p>
+              </div>
+              <div style={{ backgroundColor: '#faf5f8', border: '1px solid #f0d8ec', padding: '16px 18px', borderRadius: '8px' }}>
+                <p style={{ margin: 0, fontSize: '11px', fontWeight: '700', color: '#714B67', letterSpacing: '0.5px' }}>AVG RAW MATERIAL COST / DOZEN</p>
+                <p style={{ margin: '4px 0 0 0', fontSize: '22px', fontWeight: '800', color: '#714B67' }}>Rs. {averageCostPerDozen.toFixed(2)}</p>
+              </div>
+              <div style={{ backgroundColor: '#f0fdf4', border: '1px solid #bbf7d0', padding: '16px 18px', borderRadius: '8px' }}>
+                <p style={{ margin: 0, fontSize: '11px', fontWeight: '700', color: '#15803d', letterSpacing: '0.5px' }}>AVG RAW MATERIAL COST / PAIR</p>
+                <p style={{ margin: '4px 0 0 0', fontSize: '22px', fontWeight: '800', color: '#16a34a' }}>Rs. {averageCostPerPair.toFixed(2)}</p>
+              </div>
+              <div style={{ backgroundColor: '#fef2f2', border: '1px solid #fecaca', padding: '16px 18px', borderRadius: '8px' }}>
+                <p style={{ margin: 0, fontSize: '11px', fontWeight: '700', color: '#991b1b', letterSpacing: '0.5px' }}>TOTAL RAW MATERIALS CONSUMED</p>
+                <p style={{ margin: '4px 0 0 0', fontSize: '22px', fontWeight: '800', color: '#dc2626' }}>Rs. {totalProductionRawMaterialCost.toLocaleString()}</p>
+              </div>
+            </div>
+
+            <form onSubmit={handleAddProduction} style={{ backgroundColor: '#ffffff', padding: '20px', borderRadius: '10px', border: '1px solid #e2e8f0', boxShadow: '0 1px 3px rgba(0,0,0,0.05)', display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '12px' }}>
+              <input type="date" value={newProduction.date} onChange={e => setNewProduction({ ...newProduction, date: e.target.value })} required style={{ padding: '10px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '14px' }} />
+              <input
+                type="text"
+                list="production-articles"
+                placeholder="Article Number"
+                value={newProduction.articleNumber}
+                onChange={e => setNewProduction({ ...newProduction, articleNumber: e.target.value })}
+                required
+                style={{ padding: '10px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '14px' }}
+              />
+              <datalist id="production-articles">
+                {Object.keys(inventoryByArticle).map(a => <option key={a} value={a} />)}
+              </datalist>
+              <input type="number" min="0" step="0.01" placeholder="Dozens produced" value={newProduction.dozens} onChange={e => setNewProduction({ ...newProduction, dozens: e.target.value })} style={{ padding: '10px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '14px' }} />
+              <input type="number" min="0" step="1" placeholder="Extra pairs (optional)" value={newProduction.pairs} onChange={e => setNewProduction({ ...newProduction, pairs: e.target.value })} style={{ padding: '10px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '14px' }} />
+              <input type="text" placeholder="Notes (shift, operator, etc.)" value={newProduction.notes} onChange={e => setNewProduction({ ...newProduction, notes: e.target.value })} style={{ padding: '10px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '14px' }} />
+              <button type="submit" style={{ backgroundColor: '#714B67', color: '#ffffff', fontWeight: '700', border: 'none', borderRadius: '6px', padding: '10px', cursor: 'pointer', fontSize: '14px', gridColumn: 'span full' }}>+ Record Production</button>
+            </form>
+
+            <div style={{ backgroundColor: '#ffffff', borderRadius: '10px', border: '1px solid #e2e8f0', boxShadow: '0 1px 3px rgba(0,0,0,0.05)', overflowX: 'auto' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', minWidth: '750px' }}>
+                <thead>
+                  <tr style={{ backgroundColor: '#f1f5f9', borderBottom: '1px solid #e2e8f0', fontSize: '12px', color: '#475569', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                    <th style={{ padding: '14px' }}>Date</th>
+                    <th style={{ padding: '14px' }}>Article</th>
+                    <th style={{ padding: '14px' }}>Dozens</th>
+                    <th style={{ padding: '14px' }}>Pairs</th>
+                    <th style={{ padding: '14px' }}>RM Cost / Dozen</th>
+                    <th style={{ padding: '14px' }}>RM Cost Total</th>
+                    <th style={{ padding: '14px' }}>Notes</th>
+                    <th style={{ padding: '14px', textAlign: 'center' }}>Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {productionRecords.length === 0 ? (
+                    <tr><td colSpan="8" style={{ padding: '20px', textAlign: 'center', color: '#94a3b8' }}>No production entries yet.</td></tr>
+                  ) : (
+                    productionRecords.map(p => {
+                      const isEditing = editingProductionId === p.id
+                      const inputs = editProductionInputs[p.id] || {}
+                      const effDozens = numberOrZero(p.dozens) + (numberOrZero(p.pairs) / 12)
+                      const dozenCost = costPerDozenByArticle[p.articleNumber] || 0
+                      const lineCost = dozenCost * effDozens
+                      return (
+                        <tr key={p.id} style={{ borderBottom: '1px solid #f1f5f9', fontSize: '14px' }}>
+                          <td style={{ padding: '14px', color: '#64748b' }}>
+                            {isEditing ? (
+                              <input type="date" value={inputs.date ?? p.date} onChange={e => setEditProductionInputs(prev => ({ ...prev, [p.id]: { ...(prev[p.id] || {}), date: e.target.value } }))} style={{ padding: '4px 6px', fontSize: '12px', borderRadius: '4px', border: '1px solid #cbd5e1' }} />
+                            ) : p.date}
+                          </td>
+                          <td style={{ padding: '14px', fontWeight: '700', color: '#0f172a' }}>
+                            {isEditing ? (
+                              <input type="text" value={inputs.articleNumber ?? p.articleNumber} onChange={e => setEditProductionInputs(prev => ({ ...prev, [p.id]: { ...(prev[p.id] || {}), articleNumber: e.target.value } }))} style={{ padding: '4px 6px', fontSize: '12px', borderRadius: '4px', border: '1px solid #cbd5e1', width: '120px' }} />
+                            ) : p.articleNumber}
+                          </td>
+                          <td style={{ padding: '14px', fontWeight: '700', color: '#2563eb' }}>
+                            {isEditing ? (
+                              <input type="number" min="0" step="0.01" value={inputs.dozens ?? p.dozens} onChange={e => setEditProductionInputs(prev => ({ ...prev, [p.id]: { ...(prev[p.id] || {}), dozens: e.target.value } }))} style={{ padding: '4px 6px', fontSize: '12px', borderRadius: '4px', border: '1px solid #cbd5e1', width: '70px' }} />
+                            ) : numberOrZero(p.dozens).toFixed(2)}
+                          </td>
+                          <td style={{ padding: '14px', fontWeight: '700', color: '#0f766e' }}>
+                            {isEditing ? (
+                              <input type="number" min="0" step="1" value={inputs.pairs ?? p.pairs} onChange={e => setEditProductionInputs(prev => ({ ...prev, [p.id]: { ...(prev[p.id] || {}), pairs: e.target.value } }))} style={{ padding: '4px 6px', fontSize: '12px', borderRadius: '4px', border: '1px solid #cbd5e1', width: '70px' }} />
+                            ) : numberOrZero(p.pairs)}
+                          </td>
+                          <td style={{ padding: '14px', color: '#714B67', fontWeight: '600' }}>Rs. {dozenCost.toFixed(2)}</td>
+                          <td style={{ padding: '14px', color: '#dc2626', fontWeight: '700' }}>Rs. {lineCost.toFixed(2)}</td>
+                          <td style={{ padding: '14px', color: '#475569' }}>
+                            {isEditing ? (
+                              <input type="text" value={inputs.notes ?? p.notes} onChange={e => setEditProductionInputs(prev => ({ ...prev, [p.id]: { ...(prev[p.id] || {}), notes: e.target.value } }))} style={{ padding: '4px 6px', fontSize: '12px', borderRadius: '4px', border: '1px solid #cbd5e1', width: '140px' }} />
+                            ) : (p.notes || '-')}
+                          </td>
+                          <td style={{ padding: '14px', textAlign: 'center' }}>
+                            <div style={{ display: 'flex', gap: '6px', justifyContent: 'center', flexWrap: 'wrap' }}>
+                              {isEditing ? (
+                                <>
+                                  <button onClick={() => handleUpdateProduction(p.id)} style={{ backgroundColor: '#16a34a', color: '#fff', border: 'none', padding: '6px 10px', borderRadius: '4px', cursor: 'pointer', fontWeight: '600', fontSize: '12px' }}>Save</button>
+                                  <button onClick={() => { setEditingProductionId(null); setEditProductionInputs(prev => ({ ...prev, [p.id]: {} })) }} style={{ backgroundColor: '#64748b', color: '#fff', border: 'none', padding: '6px 10px', borderRadius: '4px', cursor: 'pointer', fontWeight: '600', fontSize: '12px' }}>Cancel</button>
+                                </>
+                              ) : (
+                                <>
+                                  <button onClick={() => { setEditingProductionId(p.id); setEditProductionInputs(prev => ({ ...prev, [p.id]: {} })) }} style={{ backgroundColor: '#2563eb', color: '#fff', border: 'none', padding: '6px 10px', borderRadius: '4px', cursor: 'pointer', fontWeight: '600', fontSize: '12px' }}>Edit</button>
+                                  <button onClick={() => handleDeleteProduction(p.id)} style={{ backgroundColor: '#dc2626', color: '#fff', border: 'none', padding: '6px 10px', borderRadius: '4px', cursor: 'pointer', fontWeight: '600', fontSize: '12px' }}>Delete</button>
+                                </>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      )
+                    })
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        {/* ============================== Raw Materials tab ============================== */}
+        {activeTab === 'rawmaterials' && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+            <h2 style={{ margin: 0, fontSize: '18px', fontWeight: '700', color: '#1e293b' }}>🧱 Raw Material Inventory</h2>
+
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '12px' }}>
+              <div style={{ backgroundColor: '#faf5f8', border: '1px solid #f0d8ec', padding: '16px 18px', borderRadius: '8px' }}>
+                <p style={{ margin: 0, fontSize: '11px', fontWeight: '700', color: '#714B67', letterSpacing: '0.5px' }}>TOTAL RAW MATERIAL STOCK VALUE</p>
+                <p style={{ margin: '4px 0 0 0', fontSize: '22px', fontWeight: '800', color: '#714B67' }}>Rs. {totalRawMaterialStockValue.toLocaleString()}</p>
+              </div>
+              <div style={{ backgroundColor: '#eff6ff', border: '1px solid #bfdbfe', padding: '16px 18px', borderRadius: '8px' }}>
+                <p style={{ margin: 0, fontSize: '11px', fontWeight: '700', color: '#1d4ed8', letterSpacing: '0.5px' }}>DISTINCT MATERIALS</p>
+                <p style={{ margin: '4px 0 0 0', fontSize: '22px', fontWeight: '800', color: '#2563eb' }}>{rawMaterials.length}</p>
+              </div>
+            </div>
+
+            <form onSubmit={handleAddRawMaterial} style={{ backgroundColor: '#ffffff', padding: '20px', borderRadius: '10px', border: '1px solid #e2e8f0', boxShadow: '0 1px 3px rgba(0,0,0,0.05)', display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '12px' }}>
+              <input type="text" placeholder="Material name (e.g. Leather, Sole, Glue)" value={newRawMaterial.name} onChange={e => setNewRawMaterial({ ...newRawMaterial, name: e.target.value })} required style={{ padding: '10px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '14px' }} />
+              <input type="text" placeholder="Unit (kg, m, pcs, ltr)" value={newRawMaterial.unit} onChange={e => setNewRawMaterial({ ...newRawMaterial, unit: e.target.value })} style={{ padding: '10px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '14px' }} />
+              <input type="number" min="0" step="0.01" placeholder="Unit cost (Rs / unit)" value={newRawMaterial.unitCost} onChange={e => setNewRawMaterial({ ...newRawMaterial, unitCost: e.target.value })} required style={{ padding: '10px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '14px' }} />
+              <input type="number" min="0" step="0.01" placeholder="Current stock qty" value={newRawMaterial.stockQty} onChange={e => setNewRawMaterial({ ...newRawMaterial, stockQty: e.target.value })} style={{ padding: '10px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '14px' }} />
+              <input type="text" placeholder="Notes" value={newRawMaterial.notes} onChange={e => setNewRawMaterial({ ...newRawMaterial, notes: e.target.value })} style={{ padding: '10px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '14px' }} />
+              <button type="submit" style={{ backgroundColor: '#714B67', color: '#ffffff', fontWeight: '700', border: 'none', borderRadius: '6px', padding: '10px', cursor: 'pointer', fontSize: '14px', gridColumn: 'span full' }}>+ Add Raw Material</button>
+            </form>
+
+            <div style={{ backgroundColor: '#ffffff', borderRadius: '10px', border: '1px solid #e2e8f0', boxShadow: '0 1px 3px rgba(0,0,0,0.05)', overflowX: 'auto' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', minWidth: '850px' }}>
+                <thead>
+                  <tr style={{ backgroundColor: '#f1f5f9', borderBottom: '1px solid #e2e8f0', fontSize: '12px', color: '#475569', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                    <th style={{ padding: '14px' }}>Material</th>
+                    <th style={{ padding: '14px' }}>Unit</th>
+                    <th style={{ padding: '14px' }}>Unit Cost</th>
+                    <th style={{ padding: '14px' }}>Stock Qty</th>
+                    <th style={{ padding: '14px' }}>Stock Value</th>
+                    <th style={{ padding: '14px' }}>Notes</th>
+                    <th style={{ padding: '14px', textAlign: 'center' }}>Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {rawMaterials.length === 0 ? (
+                    <tr><td colSpan="7" style={{ padding: '20px', textAlign: 'center', color: '#94a3b8' }}>No raw materials yet.</td></tr>
+                  ) : (
+                    rawMaterials.map(m => {
+                      const isEditing = editingRawMaterialId === m.id
+                      const inputs = editRawMaterialInputs[m.id] || {}
+                      const stockValue = numberOrZero(m.stockQty) * numberOrZero(m.unitCost)
+                      return (
+                        <tr key={m.id} style={{ borderBottom: '1px solid #f1f5f9', fontSize: '14px' }}>
+                          <td style={{ padding: '14px', fontWeight: '700', color: '#0f172a' }}>
+                            {isEditing ? (<input type="text" value={inputs.name ?? m.name} onChange={e => setEditRawMaterialInputs(prev => ({ ...prev, [m.id]: { ...(prev[m.id] || {}), name: e.target.value } }))} style={{ padding: '4px 6px', fontSize: '12px', borderRadius: '4px', border: '1px solid #cbd5e1', width: '140px' }} />) : m.name}
+                          </td>
+                          <td style={{ padding: '14px', color: '#475569' }}>
+                            {isEditing ? (<input type="text" value={inputs.unit ?? m.unit} onChange={e => setEditRawMaterialInputs(prev => ({ ...prev, [m.id]: { ...(prev[m.id] || {}), unit: e.target.value } }))} style={{ padding: '4px 6px', fontSize: '12px', borderRadius: '4px', border: '1px solid #cbd5e1', width: '60px' }} />) : m.unit}
+                          </td>
+                          <td style={{ padding: '14px', color: '#714B67', fontWeight: '600' }}>
+                            {isEditing ? (<input type="number" step="0.01" value={inputs.unitCost ?? m.unitCost} onChange={e => setEditRawMaterialInputs(prev => ({ ...prev, [m.id]: { ...(prev[m.id] || {}), unitCost: e.target.value } }))} style={{ padding: '4px 6px', fontSize: '12px', borderRadius: '4px', border: '1px solid #cbd5e1', width: '80px' }} />) : `Rs. ${numberOrZero(m.unitCost).toLocaleString()}`}
+                          </td>
+                          <td style={{ padding: '14px', color: '#2563eb', fontWeight: '600' }}>
+                            {isEditing ? (<input type="number" step="0.01" value={inputs.stockQty ?? m.stockQty} onChange={e => setEditRawMaterialInputs(prev => ({ ...prev, [m.id]: { ...(prev[m.id] || {}), stockQty: e.target.value } }))} style={{ padding: '4px 6px', fontSize: '12px', borderRadius: '4px', border: '1px solid #cbd5e1', width: '80px' }} />) : `${numberOrZero(m.stockQty).toLocaleString()} ${m.unit}`}
+                          </td>
+                          <td style={{ padding: '14px', color: '#16a34a', fontWeight: '700' }}>Rs. {stockValue.toLocaleString()}</td>
+                          <td style={{ padding: '14px', color: '#475569' }}>
+                            {isEditing ? (<input type="text" value={inputs.notes ?? m.notes} onChange={e => setEditRawMaterialInputs(prev => ({ ...prev, [m.id]: { ...(prev[m.id] || {}), notes: e.target.value } }))} style={{ padding: '4px 6px', fontSize: '12px', borderRadius: '4px', border: '1px solid #cbd5e1', width: '140px' }} />) : (m.notes || '-')}
+                          </td>
+                          <td style={{ padding: '14px', textAlign: 'center' }}>
+                            <div style={{ display: 'flex', gap: '6px', justifyContent: 'center', flexWrap: 'wrap' }}>
+                              {isEditing ? (
+                                <>
+                                  <button onClick={() => handleUpdateRawMaterial(m.id)} style={{ backgroundColor: '#16a34a', color: '#fff', border: 'none', padding: '6px 10px', borderRadius: '4px', cursor: 'pointer', fontWeight: '600', fontSize: '12px' }}>Save</button>
+                                  <button onClick={() => { setEditingRawMaterialId(null); setEditRawMaterialInputs(prev => ({ ...prev, [m.id]: {} })) }} style={{ backgroundColor: '#64748b', color: '#fff', border: 'none', padding: '6px 10px', borderRadius: '4px', cursor: 'pointer', fontWeight: '600', fontSize: '12px' }}>Cancel</button>
+                                </>
+                              ) : (
+                                <>
+                                  <button onClick={() => { setEditingRawMaterialId(m.id); setEditRawMaterialInputs(prev => ({ ...prev, [m.id]: {} })) }} style={{ backgroundColor: '#2563eb', color: '#fff', border: 'none', padding: '6px 10px', borderRadius: '4px', cursor: 'pointer', fontWeight: '600', fontSize: '12px' }}>Edit</button>
+                                  <button onClick={() => handleDeleteRawMaterial(m.id)} style={{ backgroundColor: '#dc2626', color: '#fff', border: 'none', padding: '6px 10px', borderRadius: '4px', cursor: 'pointer', fontWeight: '600', fontSize: '12px' }}>Delete</button>
+                                </>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      )
+                    })
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        {/* ============================== Costing / BOM tab ============================== */}
+        {activeTab === 'costing' && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+            <h2 style={{ margin: 0, fontSize: '18px', fontWeight: '700', color: '#1e293b' }}>💰 Costing — Raw Material Cost per Dozen</h2>
+
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '12px' }}>
+              <div style={{ backgroundColor: '#f0fdf4', border: '1px solid #bbf7d0', padding: '16px 18px', borderRadius: '8px' }}>
+                <p style={{ margin: 0, fontSize: '11px', fontWeight: '700', color: '#15803d', letterSpacing: '0.5px' }}>AVG COST / DOZEN (FACTORY)</p>
+                <p style={{ margin: '4px 0 0 0', fontSize: '22px', fontWeight: '800', color: '#16a34a' }}>Rs. {averageCostPerDozen.toFixed(2)}</p>
+              </div>
+              <div style={{ backgroundColor: '#eff6ff', border: '1px solid #bfdbfe', padding: '16px 18px', borderRadius: '8px' }}>
+                <p style={{ margin: 0, fontSize: '11px', fontWeight: '700', color: '#1d4ed8', letterSpacing: '0.5px' }}>AVG COST / PAIR (FACTORY)</p>
+                <p style={{ margin: '4px 0 0 0', fontSize: '22px', fontWeight: '800', color: '#2563eb' }}>Rs. {averageCostPerPair.toFixed(2)}</p>
+              </div>
+            </div>
+
+            <div style={{ backgroundColor: '#ffffff', padding: '20px', borderRadius: '10px', border: '1px solid #e2e8f0', boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}>
+              <h3 style={{ margin: '0 0 14px 0', fontSize: '15px', color: '#475569' }}>Bill of Materials (BOM) — define raw material usage per dozen</h3>
+
+              <form onSubmit={handleAddBom} style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: '12px', marginBottom: '18px' }}>
+                <input
+                  type="text"
+                  list="bom-articles"
+                  placeholder="Article Number"
+                  value={newBom.articleNumber}
+                  onChange={e => setNewBom({ ...newBom, articleNumber: e.target.value })}
+                  required
+                  style={{ padding: '10px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '14px' }}
+                />
+                <datalist id="bom-articles">
+                  {Object.keys(inventoryByArticle).map(a => <option key={a} value={a} />)}
+                </datalist>
+
+                <select
+                  value={newBom.rawMaterialId}
+                  onChange={e => setNewBom({ ...newBom, rawMaterialId: e.target.value })}
+                  required
+                  style={{ padding: '10px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '14px', backgroundColor: '#fff' }}
+                >
+                  <option value="">-- Select Raw Material --</option>
+                  {rawMaterials.map(m => (
+                    <option key={m.id} value={m.id}>{m.name} (Rs. {numberOrZero(m.unitCost)}/{m.unit})</option>
+                  ))}
+                </select>
+
+                <input
+                  type="number"
+                  min="0"
+                  step="0.0001"
+                  placeholder="Qty used per dozen"
+                  value={newBom.qtyPerDozen}
+                  onChange={e => setNewBom({ ...newBom, qtyPerDozen: e.target.value })}
+                  required
+                  style={{ padding: '10px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '14px' }}
+                />
+
+                <button type="submit" style={{ backgroundColor: '#714B67', color: '#ffffff', fontWeight: '700', border: 'none', borderRadius: '6px', padding: '10px', cursor: 'pointer', fontSize: '14px' }}>+ Add BOM Entry</button>
+              </form>
+
+              <div style={{ overflowX: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', minWidth: '750px' }}>
+                  <thead>
+                    <tr style={{ backgroundColor: '#f1f5f9', borderBottom: '1px solid #e2e8f0', fontSize: '12px', color: '#475569', textTransform: 'uppercase' }}>
+                      <th style={{ padding: '12px' }}>Article</th>
+                      <th style={{ padding: '12px' }}>Raw Material</th>
+                      <th style={{ padding: '12px' }}>Qty / Dozen</th>
+                      <th style={{ padding: '12px' }}>Unit Cost</th>
+                      <th style={{ padding: '12px' }}>Line Cost / Dozen</th>
+                      <th style={{ padding: '12px', textAlign: 'center' }}>Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {bomEntries.length === 0 ? (
+                      <tr><td colSpan="6" style={{ padding: '20px', textAlign: 'center', color: '#94a3b8' }}>No BOM entries yet. Add materials above to define cost per dozen.</td></tr>
+                    ) : (
+                      bomEntries.map(b => {
+                        const material = rawMaterials.find(m => String(m.id) === String(b.rawMaterialId))
+                        const isEditing = editingBomId === b.id
+                        const inputs = editBomInputs[b.id] || {}
+                        const lineCost = numberOrZero(b.qtyPerDozen) * numberOrZero(material?.unitCost)
+                        return (
+                          <tr key={b.id} style={{ borderBottom: '1px solid #f1f5f9', fontSize: '14px' }}>
+                            <td style={{ padding: '12px', fontWeight: '700', color: '#0f172a' }}>
+                              {isEditing ? (<input type="text" value={inputs.articleNumber ?? b.articleNumber} onChange={e => setEditBomInputs(prev => ({ ...prev, [b.id]: { ...(prev[b.id] || {}), articleNumber: e.target.value } }))} style={{ padding: '4px 6px', fontSize: '12px', borderRadius: '4px', border: '1px solid #cbd5e1', width: '120px' }} />) : b.articleNumber}
+                            </td>
+                            <td style={{ padding: '12px', color: '#475569' }}>
+                              {isEditing ? (
+                                <select value={inputs.rawMaterialId ?? b.rawMaterialId} onChange={e => setEditBomInputs(prev => ({ ...prev, [b.id]: { ...(prev[b.id] || {}), rawMaterialId: e.target.value } }))} style={{ padding: '4px 6px', fontSize: '12px', borderRadius: '4px', border: '1px solid #cbd5e1' }}>
+                                  {rawMaterials.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
+                                </select>
+                              ) : (material ? material.name : <em style={{ color: '#dc2626' }}>Deleted material</em>)}
+                            </td>
+                            <td style={{ padding: '12px', color: '#2563eb', fontWeight: '600' }}>
+                              {isEditing ? (<input type="number" step="0.0001" value={inputs.qtyPerDozen ?? b.qtyPerDozen} onChange={e => setEditBomInputs(prev => ({ ...prev, [b.id]: { ...(prev[b.id] || {}), qtyPerDozen: e.target.value } }))} style={{ padding: '4px 6px', fontSize: '12px', borderRadius: '4px', border: '1px solid #cbd5e1', width: '90px' }} />) : `${numberOrZero(b.qtyPerDozen)} ${material?.unit || ''}`}
+                            </td>
+                            <td style={{ padding: '12px', color: '#475569' }}>Rs. {numberOrZero(material?.unitCost).toLocaleString()}</td>
+                            <td style={{ padding: '12px', color: '#dc2626', fontWeight: '700' }}>Rs. {lineCost.toFixed(2)}</td>
+                            <td style={{ padding: '12px', textAlign: 'center' }}>
+                              <div style={{ display: 'flex', gap: '6px', justifyContent: 'center' }}>
+                                {isEditing ? (
+                                  <>
+                                    <button onClick={() => handleUpdateBom(b.id)} style={{ backgroundColor: '#16a34a', color: '#fff', border: 'none', padding: '6px 10px', borderRadius: '4px', cursor: 'pointer', fontWeight: '600', fontSize: '12px' }}>Save</button>
+                                    <button onClick={() => { setEditingBomId(null); setEditBomInputs(prev => ({ ...prev, [b.id]: {} })) }} style={{ backgroundColor: '#64748b', color: '#fff', border: 'none', padding: '6px 10px', borderRadius: '4px', cursor: 'pointer', fontWeight: '600', fontSize: '12px' }}>Cancel</button>
+                                  </>
+                                ) : (
+                                  <>
+                                    <button onClick={() => { setEditingBomId(b.id); setEditBomInputs(prev => ({ ...prev, [b.id]: {} })) }} style={{ backgroundColor: '#2563eb', color: '#fff', border: 'none', padding: '6px 10px', borderRadius: '4px', cursor: 'pointer', fontWeight: '600', fontSize: '12px' }}>Edit</button>
+                                    <button onClick={() => handleDeleteBom(b.id)} style={{ backgroundColor: '#dc2626', color: '#fff', border: 'none', padding: '6px 10px', borderRadius: '4px', cursor: 'pointer', fontWeight: '600', fontSize: '12px' }}>Delete</button>
+                                  </>
+                                )}
+                              </div>
+                            </td>
+                          </tr>
+                        )
+                      })
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <div style={{ backgroundColor: '#ffffff', padding: '20px', borderRadius: '10px', border: '1px solid #e2e8f0', boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}>
+              <h3 style={{ margin: '0 0 14px 0', fontSize: '15px', color: '#475569' }}>Computed Raw Material Cost per Dozen by Article</h3>
+              {Object.keys(costPerDozenByArticle).length === 0 ? (
+                <p style={{ color: '#94a3b8', padding: '12px 0' }}>Add BOM entries to see per-article cost per dozen.</p>
+              ) : (
+                <div style={{ overflowX: 'auto' }}>
+                  <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', minWidth: '450px' }}>
+                    <thead>
+                      <tr style={{ backgroundColor: '#f1f5f9', fontSize: '12px', color: '#475569', textTransform: 'uppercase' }}>
+                        <th style={{ padding: '12px' }}>Article</th>
+                        <th style={{ padding: '12px' }}>RM Cost / Dozen</th>
+                        <th style={{ padding: '12px' }}>RM Cost / Pair</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {Object.entries(costPerDozenByArticle).map(([article, cost]) => (
+                        <tr key={article} style={{ borderBottom: '1px solid #f1f5f9', fontSize: '14px' }}>
+                          <td style={{ padding: '12px', fontWeight: '700', color: '#0f172a' }}>{article}</td>
+                          <td style={{ padding: '12px', color: '#714B67', fontWeight: '700' }}>Rs. {cost.toFixed(2)}</td>
+                          <td style={{ padding: '12px', color: '#2563eb', fontWeight: '600' }}>Rs. {(cost / 12).toFixed(2)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
         {activeTab === 'wages' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
             <h2 style={{ margin: 0, fontSize: '18px', fontWeight: '700', color: '#1e293b' }}>Daily Wages & Worker Ledger</h2>
@@ -2632,6 +3223,10 @@ export default function App() {
                 <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '14px', marginBottom: '10px' }}>
                   <span style={{ color: '#64748b', fontWeight: '600' }}>Stock in Dozens</span>
                   <span style={{ fontWeight: '700', color: stockTotals.totalDozens < 0 ? '#dc2626' : '#16a34a' }}>{stockTotals.totalDozens.toFixed(2)} Dozens</span>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '14px', marginBottom: '10px' }}>
+                  <span style={{ color: '#64748b', fontWeight: '600' }}>Raw Material Stock Value</span>
+                  <span style={{ fontWeight: '700', color: '#714B67' }}>Rs. {totalRawMaterialStockValue.toLocaleString()}</span>
                 </div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '14px', marginBottom: '10px' }}>
                   <span style={{ color: '#64748b', fontWeight: '600' }}>Market Receivable (Dues)</span>
