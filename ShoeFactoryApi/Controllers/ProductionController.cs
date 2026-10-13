@@ -27,6 +27,47 @@ namespace ShoeFactoryApi.Controllers
                 .ToListAsync();
         }
 
+        // GET api/production/wages?startDate=2026-01-01&endDate=2026-01-07
+        // Returns computed wages for machine man and safai/packing based on total dozens produced.
+        [HttpGet("wages")]
+        public async Task<ActionResult> GetWages([FromQuery] DateTime? startDate, [FromQuery] DateTime? endDate)
+        {
+            // Normalize to UTC dates. If not provided, default to last 7 days.
+            var start = startDate?.Date ?? DateTime.UtcNow.Date.AddDays(-7);
+            var end = (endDate?.Date ?? DateTime.UtcNow.Date);
+            if (end < start) return BadRequest("endDate must be >= startDate");
+
+            var records = await _db.ProductionRecords
+                .Where(p => p.Date >= start && p.Date <= end)
+                .ToListAsync();
+
+            // Convert pairs -> dozens (12 pairs = 1 dozen), and add explicit dozens field.
+            var totalDozens = records.Sum(r => r.Dozens + (r.Pairs / 12m));
+
+            var perArticle = records
+                .GroupBy(r => r.ArticleNumber)
+                .Select(g => new { Article = g.Key, Dozens = g.Sum(r => r.Dozens + (r.Pairs / 12m)) })
+                .OrderByDescending(x => x.Dozens)
+                .ToList();
+
+            const decimal MachineRate = 38m; // per dozen for machine man (Cheema)
+            const decimal SafaiRate = 50m;   // per dozen for safai & packing
+
+            var machine = decimal.Round(totalDozens * MachineRate, 2);
+            var safai = decimal.Round(totalDozens * SafaiRate, 2);
+            var totalLabor = machine + safai;
+
+            return Ok(new {
+                Start = start,
+                End = end,
+                TotalDozens = decimal.Round(totalDozens, 4),
+                Machine = machine,
+                Safai = safai,
+                TotalLabor = totalLabor,
+                PerArticle = perArticle
+            });
+        }
+
         [HttpGet("{id:int}")]
         public async Task<ActionResult<ProductionRecord>> GetById(int id)
         {

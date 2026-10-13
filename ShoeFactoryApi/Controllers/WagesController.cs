@@ -6,6 +6,12 @@ using ShoeFactoryApi.Models;
 
 namespace ShoeFactoryApi.Controllers
 {
+    public class ProductionWageRequest
+    {
+        public DateTime StartDate { get; set; }
+        public DateTime EndDate { get; set; }
+    }
+
     [Authorize]
     [Route("api/wages")]
     [ApiController]
@@ -14,6 +20,145 @@ namespace ShoeFactoryApi.Controllers
         private readonly FactoryDbContext _context;
 
         public WagesController(FactoryDbContext context) => _context = context;
+
+        [HttpGet("production")]
+        public async Task<ActionResult<object>> GetProductionWages([FromQuery] DateTime? startDate, [FromQuery] DateTime? endDate)
+        {
+            var start = (startDate ?? DateTime.UtcNow.Date.AddDays(-6)).Date;
+            var end = (endDate ?? DateTime.UtcNow.Date).Date;
+
+            if (end < start)
+            {
+                return BadRequest(new { message = "End date must be on or after the start date." });
+            }
+
+            var records = await _context.ProductionRecords
+                .Where(p => p.Date >= start && p.Date <= end)
+                .ToListAsync();
+
+            var totalDozens = records.Sum(p => p.Dozens + (p.Pairs / 12m));
+            var machineAmount = Math.Round(totalDozens * 38m, 2);
+            var safaiAmount = Math.Round(totalDozens * 50m, 2);
+            var totalLabor = Math.Round(machineAmount + safaiAmount, 2);
+
+            return Ok(new
+            {
+                startDate = start,
+                endDate = end,
+                totalDozens = Math.Round(totalDozens, 4),
+                machineAmount,
+                safaiAmount,
+                totalLabor,
+                perArticle = records
+                    .GroupBy(p => p.ArticleNumber)
+                    .Select(g => new
+                    {
+                        article = g.Key,
+                        dozens = Math.Round(g.Sum(p => p.Dozens + (p.Pairs / 12m)), 4)
+                    })
+                    .OrderByDescending(x => x.dozens)
+                    .ToList()
+            });
+        }
+
+        [HttpPost("production/report")]
+        public async Task<ActionResult<object>> SaveProductionWageReport([FromBody] ProductionWageRequest request)
+        {
+            if (request.StartDate == default || request.EndDate == default)
+            {
+                return BadRequest(new { message = "Both startDate and endDate are required." });
+            }
+
+            var start = request.StartDate.Date;
+            var end = request.EndDate.Date;
+            if (end < start)
+            {
+                return BadRequest(new { message = "End date must be on or after the start date." });
+            }
+
+            var records = await _context.ProductionRecords
+                .Where(p => p.Date >= start && p.Date <= end)
+                .ToListAsync();
+
+            var totalDozens = records.Sum(p => p.Dozens + (p.Pairs / 12m));
+            var machineAmount = Math.Round(totalDozens * 38m, 2);
+            var safaiAmount = Math.Round(totalDozens * 50m, 2);
+            var totalLabor = Math.Round(machineAmount + safaiAmount, 2);
+
+            var machineWorker = await _context.Workers.FirstOrDefaultAsync(w => w.Name.ToLower() == "cheema");
+            if (machineWorker == null)
+            {
+                machineWorker = new Worker
+                {
+                    Name = "Cheema",
+                    Phone = "",
+                    Role = "Machine Man",
+                    IsActive = true
+                };
+                _context.Workers.Add(machineWorker);
+                await _context.SaveChangesAsync();
+            }
+
+            var safaiWorker = await _context.Workers.FirstOrDefaultAsync(w => w.Name.ToLower() == "safai & packing" || w.Role.ToLower() == "safai & packing");
+            if (safaiWorker == null)
+            {
+                safaiWorker = new Worker
+                {
+                    Name = "Safai & Packing",
+                    Phone = "",
+                    Role = "Safai & Packing",
+                    IsActive = true
+                };
+                _context.Workers.Add(safaiWorker);
+                await _context.SaveChangesAsync();
+            }
+
+            var machinePayment = new WagePayment
+            {
+                WorkerId = machineWorker.Id,
+                Amount = machineAmount,
+                PaymentDate = end,
+                Notes = $"Production wages for {start:yyyy-MM-dd} to {end:yyyy-MM-dd} (Machine Man)"
+            };
+
+            var safaiPayment = new WagePayment
+            {
+                WorkerId = safaiWorker.Id,
+                Amount = safaiAmount,
+                PaymentDate = end,
+                Notes = $"Production wages for {start:yyyy-MM-dd} to {end:yyyy-MM-dd} (Safai & Packing)"
+            };
+
+            _context.WagePayments.AddRange(machinePayment, safaiPayment);
+            await _context.SaveChangesAsync();
+
+            return Ok(new
+            {
+                startDate = start,
+                endDate = end,
+                totalDozens = Math.Round(totalDozens, 4),
+                machineAmount,
+                safaiAmount,
+                totalLabor,
+                perArticle = records
+                    .GroupBy(p => p.ArticleNumber)
+                    .Select(g => new
+                    {
+                        article = g.Key,
+                        dozens = Math.Round(g.Sum(p => p.Dozens + (p.Pairs / 12m)), 4)
+                    })
+                    .OrderByDescending(x => x.dozens)
+                    .ToList(),
+                machineWorkerId = machineWorker.Id,
+                safaiWorkerId = safaiWorker.Id,
+                saved = true,
+                createdPayments = new[]
+                {
+                    new { workerId = machineWorker.Id, workerName = machineWorker.Name, amount = machineAmount },
+                    new { workerId = safaiWorker.Id, workerName = safaiWorker.Name, amount = safaiAmount }
+                }
+            });
+        }
 
         [HttpGet("workers")]
         public async Task<ActionResult<IEnumerable<Worker>>> GetWorkers()

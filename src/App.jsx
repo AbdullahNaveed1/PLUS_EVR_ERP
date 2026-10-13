@@ -188,6 +188,12 @@ export default function App() {
   const [customerDescriptionInputs, setCustomerDescriptionInputs] = useState({})
   const [newWorker, setNewWorker] = useState({ name: '', phone: '', role: '' })
   const [newWagePayment, setNewWagePayment] = useState({ workerId: '', amount: '', paymentDate: new Date().toISOString().split('T')[0], notes: '' })
+  const [productionWageRange, setProductionWageRange] = useState({
+    startDate: new Date(Date.now() - 6 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
+    endDate: new Date().toISOString().split('T')[0]
+  })
+  const [productionWageReport, setProductionWageReport] = useState(null)
+  const [wageReportStatus, setWageReportStatus] = useState('')
 
   const [selectedCustomerId, setSelectedCustomerId] = useState('')
   const [saleCustomerName, setSaleCustomerName] = useState('')
@@ -245,6 +251,12 @@ export default function App() {
       fetchAllData()
     }
   }, [token])
+
+  useEffect(() => {
+    if (token) {
+      fetchProductionWageReport(productionWageRange.startDate, productionWageRange.endDate)
+    }
+  }, [token, productionWageRange.startDate, productionWageRange.endDate])
 
   const authHeaders = () => ({ Authorization: `Bearer ${token}` })
 
@@ -421,6 +433,32 @@ export default function App() {
     }, 0)
   }, [productionRecords, costPerDozenByArticle])
 
+  const bomSummaryByArticle = useMemo(() => {
+    const map = {}
+    bomEntries.forEach(entry => {
+      const material = rawMaterials.find(m => String(m.id) === String(entry.rawMaterialId))
+      const lineCost = numberOrZero(entry.qtyPerDozen) * numberOrZero(material?.unitCost)
+      if (!map[entry.articleNumber]) {
+        map[entry.articleNumber] = {
+          articleNumber: entry.articleNumber,
+          totalDozenCost: 0,
+          entries: 0,
+          materials: []
+        }
+      }
+      map[entry.articleNumber].totalDozenCost += lineCost
+      map[entry.articleNumber].entries += 1
+      map[entry.articleNumber].materials.push({
+        id: entry.id,
+        rawMaterial: material?.name || 'Unknown material',
+        qtyPerDozen: numberOrZero(entry.qtyPerDozen),
+        unitCost: numberOrZero(material?.unitCost),
+        lineCost
+      })
+    })
+    return Object.values(map).sort((a, b) => b.totalDozenCost - a.totalDozenCost)
+  }, [bomEntries, rawMaterials])
+
   const averageCostPerDozen = totalDozensProduced > 0 ? totalProductionRawMaterialCost / totalDozensProduced : 0
   const averageCostPerPair = averageCostPerDozen / 12
 
@@ -543,6 +581,63 @@ export default function App() {
     }, { headers: authHeaders() })
     setNewWagePayment({ workerId: '', amount: '', paymentDate: new Date().toISOString().split('T')[0], notes: '' })
     fetchAllData()
+  }
+
+  const fetchProductionWageReport = async (startDate, endDate) => {
+    if (!startDate || !endDate) return
+    try {
+      const response = await axios.get(`${API_BASE_URL}/api/wages/production?startDate=${encodeURIComponent(startDate)}&endDate=${encodeURIComponent(endDate)}`, { headers: authHeaders() })
+      setProductionWageReport(response.data)
+      setWageReportStatus('')
+    } catch (err) {
+      console.error('Error loading production wage report:', err)
+      setWageReportStatus(err.response?.data?.message || 'Failed to calculate production wages.')
+    }
+  }
+
+  const saveProductionWageReport = async () => {
+    if (!productionWageRange.startDate || !productionWageRange.endDate) return
+    try {
+      const response = await axios.post(`${API_BASE_URL}/api/wages/production/report`, {
+        startDate: productionWageRange.startDate,
+        endDate: productionWageRange.endDate
+      }, { headers: authHeaders() })
+      setProductionWageReport(response.data)
+      setWageReportStatus('Production wages saved to payroll ledger.')
+      fetchAllData()
+    } catch (err) {
+      console.error('Error saving production wage report:', err)
+      setWageReportStatus(err.response?.data?.message || 'Failed to save production wages.')
+    }
+  }
+
+  const exportProductionWageReport = () => {
+    if (!productionWageReport) return
+
+    const rows = [
+      ['Date Range', `${productionWageReport.startDate} to ${productionWageReport.endDate}`],
+      ['Total Dozens Produced', productionWageReport.totalDozens],
+      ['Machine Man Wages', productionWageReport.machineAmount],
+      ['Safai & Packing Wages', productionWageReport.safaiAmount],
+      ['Total Labour Wages', productionWageReport.totalLabor],
+      [],
+      ['Article', 'Dozens']
+    ]
+
+    if (Array.isArray(productionWageReport.perArticle)) {
+      productionWageReport.perArticle.forEach(item => {
+        rows.push([item.article, item.dozens])
+      })
+    }
+
+    const csv = rows.map(row => row.map(value => `"${String(value ?? '').replace(/"/g, '""')}"`).join(',')).join('\n')
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = `production-wages-${productionWageRange.startDate}-to-${productionWageRange.endDate}.csv`
+    link.click()
+    URL.revokeObjectURL(url)
   }
 
   const handleDeleteProduct = async (id) => {
@@ -1570,17 +1665,33 @@ export default function App() {
   const handleAddBom = async (e) => {
     e.preventDefault()
     if (!newBom.articleNumber || !newBom.rawMaterialId || newBom.qtyPerDozen === '') return
+
+    const qtyPerDozen = Number(newBom.qtyPerDozen)
+    if (!Number.isFinite(qtyPerDozen) || qtyPerDozen <= 0) {
+      alert('Qty per dozen must be greater than zero.')
+      return
+    }
+
+    const duplicate = bomEntries.some(entry =>
+      String(entry.articleNumber).trim().toLowerCase() === String(newBom.articleNumber).trim().toLowerCase() &&
+      Number(entry.rawMaterialId) === Number(newBom.rawMaterialId)
+    )
+    if (duplicate) {
+      alert('This raw material is already mapped to this article. Edit the quantity instead of adding a duplicate.')
+      return
+    }
+
     try {
       const res = await axios.post(`${API_BASE_URL}/api/bom`, {
         articleNumber: newBom.articleNumber.trim(),
         rawMaterialId: Number(newBom.rawMaterialId),
-        qtyPerDozen: Number(newBom.qtyPerDozen) || 0
+        qtyPerDozen: qtyPerDozen
       }, { headers: authHeaders() })
       setBomEntries(prev => [res.data, ...prev])
       setNewBom({ articleNumber: '', rawMaterialId: '', qtyPerDozen: '' })
     } catch (err) {
       console.error('Add BOM failed:', err)
-      alert('Failed to save BOM entry.')
+      alert(err.response?.data?.message || err.response?.data || 'Failed to save BOM entry.')
     }
   }
 
@@ -1593,6 +1704,16 @@ export default function App() {
       rawMaterialId: inputs.rawMaterialId !== undefined ? Number(inputs.rawMaterialId) : existing.rawMaterialId,
       qtyPerDozen: inputs.qtyPerDozen !== undefined ? Number(inputs.qtyPerDozen) || 0 : existing.qtyPerDozen
     }
+
+    if (!payload.articleNumber?.trim()) {
+      alert('Article number is required.')
+      return
+    }
+    if (!Number.isFinite(payload.qtyPerDozen) || payload.qtyPerDozen <= 0) {
+      alert('Qty per dozen must be greater than zero.')
+      return
+    }
+
     try {
       const res = await axios.put(`${API_BASE_URL}/api/bom/${id}`, payload, { headers: authHeaders() })
       setBomEntries(prev => prev.map(b => b.id === id ? res.data : b))
@@ -1600,7 +1721,7 @@ export default function App() {
       setEditBomInputs(prev => ({ ...prev, [id]: {} }))
     } catch (err) {
       console.error('Update BOM failed:', err)
-      alert('Failed to update BOM entry.')
+      alert(err.response?.data?.message || err.response?.data || 'Failed to update BOM entry.')
     }
   }
 
@@ -2929,7 +3050,7 @@ export default function App() {
         {/* ============================== Costing / BOM tab ============================== */}
         {activeTab === 'costing' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-            <h2 style={{ margin: 0, fontSize: '18px', fontWeight: '700', color: '#1e293b' }}>💰 Costing — Raw Material Cost per Dozen</h2>
+            <h2 style={{ margin: 0, fontSize: '18px', fontWeight: '700', color: '#1e293b' }}>💰 Costing — BOM & Raw Material Cost</h2>
 
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '12px' }}>
               <div style={{ backgroundColor: '#f0fdf4', border: '1px solid #bbf7d0', padding: '16px 18px', borderRadius: '8px' }}>
@@ -2940,10 +3061,15 @@ export default function App() {
                 <p style={{ margin: 0, fontSize: '11px', fontWeight: '700', color: '#1d4ed8', letterSpacing: '0.5px' }}>AVG COST / PAIR (FACTORY)</p>
                 <p style={{ margin: '4px 0 0 0', fontSize: '22px', fontWeight: '800', color: '#2563eb' }}>Rs. {averageCostPerPair.toFixed(2)}</p>
               </div>
+              <div style={{ backgroundColor: '#fff7ed', border: '1px solid #fed7aa', padding: '16px 18px', borderRadius: '8px' }}>
+                <p style={{ margin: 0, fontSize: '11px', fontWeight: '700', color: '#c2410c', letterSpacing: '0.5px' }}>TOTAL BOM ITEMS</p>
+                <p style={{ margin: '4px 0 0 0', fontSize: '22px', fontWeight: '800', color: '#c2410c' }}>{bomEntries.length}</p>
+              </div>
             </div>
 
             <div style={{ backgroundColor: '#ffffff', padding: '20px', borderRadius: '10px', border: '1px solid #e2e8f0', boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}>
-              <h3 style={{ margin: '0 0 14px 0', fontSize: '15px', color: '#475569' }}>Bill of Materials (BOM) — define raw material usage per dozen</h3>
+              <h3 style={{ margin: '0 0 12px 0', fontSize: '15px', color: '#475569' }}>BOM = Raw material usage per 1 dozen of one article</h3>
+              <p style={{ margin: '0 0 18px 0', color: '#64748b', fontSize: '13px' }}>Add one row per raw material for each article. Example: Article A-100 uses 2.5 kg leather + 0.8 kg sole foam. The system multiplies each row by the actual dozen quantity produced.</p>
 
               <form onSubmit={handleAddBom} style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: '12px', marginBottom: '18px' }}>
                 <input
@@ -3048,6 +3174,33 @@ export default function App() {
             </div>
 
             <div style={{ backgroundColor: '#ffffff', padding: '20px', borderRadius: '10px', border: '1px solid #e2e8f0', boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}>
+              <h3 style={{ margin: '0 0 14px 0', fontSize: '15px', color: '#475569' }}>Article-wise BOM Summary</h3>
+              {bomSummaryByArticle.length === 0 ? (
+                <p style={{ color: '#94a3b8', padding: '12px 0' }}>Add BOM entries to see per-article cost per dozen and material mix.</p>
+              ) : (
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: '12px' }}>
+                  {bomSummaryByArticle.map(summary => (
+                    <div key={summary.articleNumber} style={{ border: '1px solid #e2e8f0', borderRadius: '10px', overflow: 'hidden', backgroundColor: '#f8fafc' }}>
+                      <div style={{ backgroundColor: '#eef2ff', padding: '12px 14px', borderBottom: '1px solid #e2e8f0' }}>
+                        <strong style={{ color: '#312e81' }}>{summary.articleNumber}</strong>
+                      </div>
+                      <div style={{ padding: '12px 14px' }}>
+                        <div style={{ fontSize: '13px', color: '#475569', marginBottom: '8px' }}><strong>Total material cost / dozen:</strong> Rs. {summary.totalDozenCost.toFixed(2)}</div>
+                        <ul style={{ margin: 0, paddingLeft: '18px', color: '#334155', fontSize: '12px' }}>
+                          {summary.materials.map(item => (
+                            <li key={item.id} style={{ marginBottom: '6px' }}>
+                              {item.rawMaterial} — {item.qtyPerDozen} x Rs. {item.unitCost.toFixed(2)} = Rs. {item.lineCost.toFixed(2)}
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div style={{ backgroundColor: '#ffffff', padding: '20px', borderRadius: '10px', border: '1px solid #e2e8f0', boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}>
               <h3 style={{ margin: '0 0 14px 0', fontSize: '15px', color: '#475569' }}>Computed Raw Material Cost per Dozen by Article</h3>
               {Object.keys(costPerDozenByArticle).length === 0 ? (
                 <p style={{ color: '#94a3b8', padding: '12px 0' }}>Add BOM entries to see per-article cost per dozen.</p>
@@ -3079,7 +3232,81 @@ export default function App() {
 
         {activeTab === 'wages' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-            <h2 style={{ margin: 0, fontSize: '18px', fontWeight: '700', color: '#1e293b' }}>Daily Wages & Worker Ledger</h2>
+            <div style={{ backgroundColor: '#ffffff', padding: '20px', borderRadius: '12px', border: '1px solid #e2e8f0', boxShadow: '0 1px 3px rgba(15, 23, 42, 0.06)' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', flexWrap: 'wrap', marginBottom: '16px' }}>
+                <div>
+                  <h2 style={{ margin: 0, fontSize: '22px', fontWeight: '800', color: '#0f172a' }}>Production Labour Payroll</h2>
+                  <p style={{ margin: '6px 0 0 0', fontSize: '13px', color: '#64748b' }}>Machine man + safai & packing wages calculated from production records.</p>
+                </div>
+                <span style={{ backgroundColor: '#ecfeff', color: '#0f766e', border: '1px solid #a7f3d0', padding: '6px 12px', borderRadius: '999px', fontSize: '12px', fontWeight: '700' }}>Pkr labour summary</span>
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '12px', marginBottom: '18px' }}>
+                <div style={{ backgroundColor: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '10px', padding: '16px' }}>
+                  <p style={{ margin: 0, fontSize: '11px', letterSpacing: '0.5px', color: '#64748b', fontWeight: '700' }}>TOTAL DOZENS</p>
+                  <p style={{ margin: '8px 0 0', fontSize: '28px', fontWeight: '800', color: '#0f172a' }}>{Number(productionWageReport?.totalDozens || 0).toFixed(2)}</p>
+                </div>
+                <div style={{ backgroundColor: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: '10px', padding: '16px' }}>
+                  <p style={{ margin: 0, fontSize: '11px', letterSpacing: '0.5px', color: '#1d4ed8', fontWeight: '700' }}>MACHINE MAN (38/dozen)</p>
+                  <p style={{ margin: '8px 0 0', fontSize: '28px', fontWeight: '800', color: '#1d4ed8' }}>Rs. {Number(productionWageReport?.machineAmount || 0).toLocaleString()}</p>
+                </div>
+                <div style={{ backgroundColor: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: '10px', padding: '16px' }}>
+                  <p style={{ margin: 0, fontSize: '11px', letterSpacing: '0.5px', color: '#15803d', fontWeight: '700' }}>SAFAI & PACKING (50/dozen)</p>
+                  <p style={{ margin: '8px 0 0', fontSize: '28px', fontWeight: '800', color: '#15803d' }}>Rs. {Number(productionWageReport?.safaiAmount || 0).toLocaleString()}</p>
+                </div>
+                <div style={{ backgroundColor: '#fff7ed', border: '1px solid #fed7aa', borderRadius: '10px', padding: '16px' }}>
+                  <p style={{ margin: 0, fontSize: '11px', letterSpacing: '0.5px', color: '#c2410c', fontWeight: '700' }}>TOTAL LABOUR</p>
+                  <p style={{ margin: '8px 0 0', fontSize: '28px', fontWeight: '800', color: '#c2410c' }}>Rs. {Number(productionWageReport?.totalLabor || 0).toLocaleString()}</p>
+                </div>
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: '12px', marginBottom: '14px' }}>
+                <div>
+                  <label style={{ display: 'block', marginBottom: '6px', fontSize: '12px', fontWeight: '700', color: '#475569' }}>Start Date</label>
+                  <input type="date" value={productionWageRange.startDate} onChange={e => setProductionWageRange({ ...productionWageRange, startDate: e.target.value })} style={{ width: '100%', padding: '10px', borderRadius: '6px', border: '1px solid #cbd5e1', boxSizing: 'border-box' }} />
+                </div>
+                <div>
+                  <label style={{ display: 'block', marginBottom: '6px', fontSize: '12px', fontWeight: '700', color: '#475569' }}>End Date</label>
+                  <input type="date" value={productionWageRange.endDate} onChange={e => setProductionWageRange({ ...productionWageRange, endDate: e.target.value })} style={{ width: '100%', padding: '10px', borderRadius: '6px', border: '1px solid #cbd5e1', boxSizing: 'border-box' }} />
+                </div>
+                <div style={{ display: 'flex', alignItems: 'end', gap: '8px' }}>
+                  <button type="button" onClick={() => fetchProductionWageReport(productionWageRange.startDate, productionWageRange.endDate)} style={{ flex: 1, backgroundColor: '#714B67', color: '#fff', border: 'none', borderRadius: '6px', padding: '10px 12px', fontWeight: '700', cursor: 'pointer' }}>Calculate</button>
+                  <button type="button" onClick={saveProductionWageReport} style={{ flex: 1, backgroundColor: '#16a34a', color: '#fff', border: 'none', borderRadius: '6px', padding: '10px 12px', fontWeight: '700', cursor: 'pointer' }}>Save to Payroll</button>
+                  <button type="button" onClick={exportProductionWageReport} style={{ flex: 1, backgroundColor: '#2563eb', color: '#fff', border: 'none', borderRadius: '6px', padding: '10px 12px', fontWeight: '700', cursor: 'pointer' }}>Export CSV</button>
+                </div>
+              </div>
+
+              {wageReportStatus && <div style={{ marginBottom: '12px', padding: '10px 12px', borderRadius: '8px', backgroundColor: wageReportStatus.toLowerCase().includes('failed') || wageReportStatus.toLowerCase().includes('error') ? '#fef2f2' : '#ecfdf5', border: `1px solid ${wageReportStatus.toLowerCase().includes('failed') || wageReportStatus.toLowerCase().includes('error') ? '#fecaca' : '#a7f3d0'}`, color: wageReportStatus.toLowerCase().includes('failed') || wageReportStatus.toLowerCase().includes('error') ? '#991b1b' : '#166534', fontWeight: '600', fontSize: '13px' }}>{wageReportStatus}</div>}
+
+              {productionWageReport && (
+                <div style={{ borderTop: '1px solid #e2e8f0', paddingTop: '16px' }}>
+                  <p style={{ margin: '0 0 8px', fontSize: '13px', color: '#475569' }}><strong>Range:</strong> {productionWageReport.startDate} to {productionWageReport.endDate}</p>
+                  <div style={{ overflowX: 'auto' }}>
+                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
+                      <thead>
+                        <tr style={{ backgroundColor: '#f8fafc', color: '#475569', fontWeight: '700' }}>
+                          <th style={{ textAlign: 'left', padding: '10px', borderBottom: '1px solid #e2e8f0' }}>Article</th>
+                          <th style={{ textAlign: 'right', padding: '10px', borderBottom: '1px solid #e2e8f0' }}>Dozens</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {Array.isArray(productionWageReport.perArticle) && productionWageReport.perArticle.length > 0 ? (
+                          productionWageReport.perArticle.map(item => (
+                            <tr key={item.article} style={{ borderBottom: '1px solid #f1f5f9' }}>
+                              <td style={{ padding: '10px' }}>{item.article}</td>
+                              <td style={{ padding: '10px', textAlign: 'right', fontWeight: '600' }}>{Number(item.dozens).toFixed(2)}</td>
+                            </tr>
+                          ))
+                        ) : (
+                          <tr><td colSpan="2" style={{ padding: '12px', color: '#64748b', textAlign: 'center' }}>No production entries in this range.</td></tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+            </div>
+
             <form onSubmit={handleAddWorker} style={{ backgroundColor: '#ffffff', padding: '20px', borderRadius: '10px', border: '1px solid #e2e8f0', display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '12px' }}>
               <input type="text" placeholder="Worker name" value={newWorker.name} onChange={e => setNewWorker({ ...newWorker, name: e.target.value })} required style={{ padding: '10px', borderRadius: '6px', border: '1px solid #cbd5e1' }} />
               <input type="text" placeholder="Phone" value={newWorker.phone} onChange={e => setNewWorker({ ...newWorker, phone: e.target.value })} style={{ padding: '10px', borderRadius: '6px', border: '1px solid #cbd5e1' }} />

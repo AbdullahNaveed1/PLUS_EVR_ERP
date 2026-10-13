@@ -10,6 +10,10 @@ const API = axios.create({
   },
 });
 
+// If there's already a token in localStorage, set default header (fallback for broken interceptor)
+const _storedToken = localStorage.getItem('token');
+if (_storedToken) API.defaults.headers.common.Authorization = `Bearer ${_storedToken}`;
+
 API.interceptors.request.use(
   (config) => {
     const token = localStorage.getItem('token');
@@ -40,6 +44,14 @@ export const getCustomerByPhone = async (phone) => {
 };
 
 // --- Login Component ---
+// Fetch wages for a given date range (startDate/endDate as ISO yyyy-MM-dd strings)
+export const getProductionWages = async (startDate, endDate) => {
+  const params = new URLSearchParams();
+  if (startDate) params.append('startDate', startDate);
+  if (endDate) params.append('endDate', endDate);
+  const response = await API.get(`/production/wages?${params.toString()}`);
+  return response.data;
+};
 function Login({ onLoginSuccess }) {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
@@ -103,6 +115,13 @@ function Dashboard({ onLogout }) {
   const [customerName, setCustomerName] = useState('');
   const [customerError, setCustomerError] = useState('');
 
+  // Production wages UI state
+  const [wagesStart, setWagesStart] = useState('');
+  const [wagesEnd, setWagesEnd] = useState('');
+  const [wagesResult, setWagesResult] = useState(null);
+  const [wagesError, setWagesError] = useState('');
+  const [wagesLoading, setWagesLoading] = useState(false);
+
   // Handle Customer Phone Search
   const handlePhoneChange = async (e) => {
     const phone = e.target.value;
@@ -135,6 +154,22 @@ function Dashboard({ onLogout }) {
       setStatusMessage(response.message || 'Stock successfully updated!');
     } catch (err) {
       setStockError(err.response?.data?.message || 'Failed to deduct stock. Check product ID or permissions.');
+    }
+  };
+
+  // Fetch wages for selected date range
+  const handleFetchWages = async () => {
+    setWagesError('');
+    setWagesResult(null);
+    setWagesLoading(true);
+    try {
+      // Expecting yyyy-MM-dd strings
+      const data = await getProductionWages(wagesStart || undefined, wagesEnd || undefined);
+      setWagesResult(data);
+    } catch (err) {
+      setWagesError(err.response?.data?.message || err.message || 'Failed to fetch wages');
+    } finally {
+      setWagesLoading(false);
     }
   };
 
@@ -208,6 +243,47 @@ function Dashboard({ onLogout }) {
           Process Deduction
         </button>
       </form>
+
+      <hr style={{ margin: '20px 0' }} />
+
+      {/* --- Production Wages Calculation --- */}
+      <h3>Production Wages (Machine man & Safai/Packing)</h3>
+      <div style={{ marginBottom: '25px', padding: '15px', background: '#fff', borderRadius: '6px', border: '1px solid #eee' }}>
+        <div style={{ display: 'flex', gap: '8px', marginBottom: '10px' }}>
+          <div style={{ flex: 1 }}>
+            <label>Start Date (yyyy-mm-dd):</label><br />
+            <input type="date" value={wagesStart} onChange={(e) => setWagesStart(e.target.value)} style={{ width: '100%', padding: '8px' }} />
+          </div>
+          <div style={{ flex: 1 }}>
+            <label>End Date (yyyy-mm-dd):</label><br />
+            <input type="date" value={wagesEnd} onChange={(e) => setWagesEnd(e.target.value)} style={{ width: '100%', padding: '8px' }} />
+          </div>
+          <div style={{ display: 'flex', alignItems: 'end' }}>
+            <button onClick={handleFetchWages} style={{ padding: '10px', background: '#5cb85c', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer' }}>
+              {wagesLoading ? 'Calculating...' : 'Calculate Wages'}
+            </button>
+          </div>
+        </div>
+
+        {wagesError && <p style={{ color: 'red' }}>{wagesError}</p>}
+
+        {wagesResult && (
+          <div style={{ marginTop: '10px' }}>
+            <p><strong>Range:</strong> {new Date(wagesResult.Start).toLocaleDateString()} — {new Date(wagesResult.End).toLocaleDateString()}</p>
+            <p><strong>Total Dozens Produced:</strong> {wagesResult.TotalDozens}</p>
+            <p><strong>Machine (38 per dozen):</strong> Rs {wagesResult.Machine}</p>
+            <p><strong>Safai & Packing (50 per dozen):</strong> Rs {wagesResult.Safai}</p>
+            <p><strong>Total Labour Cost:</strong> Rs {wagesResult.TotalLabor}</p>
+
+            <h4>Per Article Breakdown</h4>
+            <ul>
+              {wagesResult.PerArticle.map((p) => (
+                <li key={p.Article}>{p.Article}: {p.Dozens} dozens</li>
+              ))}
+            </ul>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
