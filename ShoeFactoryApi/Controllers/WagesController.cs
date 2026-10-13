@@ -24,8 +24,8 @@ namespace ShoeFactoryApi.Controllers
         [HttpGet("production")]
         public async Task<ActionResult<object>> GetProductionWages([FromQuery] DateTime? startDate, [FromQuery] DateTime? endDate)
         {
-            var start = (startDate ?? DateTime.UtcNow.Date.AddDays(-6)).Date;
-            var end = (endDate ?? DateTime.UtcNow.Date).Date;
+            var start = DateTime.SpecifyKind((startDate ?? DateTime.UtcNow.Date.AddDays(-6)).Date, DateTimeKind.Utc);
+            var end = DateTime.SpecifyKind((endDate ?? DateTime.UtcNow.Date).Date, DateTimeKind.Utc);
 
             if (end < start)
             {
@@ -69,8 +69,8 @@ namespace ShoeFactoryApi.Controllers
                 return BadRequest(new { message = "Both startDate and endDate are required." });
             }
 
-            var start = request.StartDate.Date;
-            var end = request.EndDate.Date;
+            var start = DateTime.SpecifyKind(request.StartDate.Date, DateTimeKind.Utc);
+            var end = DateTime.SpecifyKind(request.EndDate.Date, DateTimeKind.Utc);
             if (end < start)
             {
                 return BadRequest(new { message = "End date must be on or after the start date." });
@@ -111,6 +111,15 @@ namespace ShoeFactoryApi.Controllers
                 };
                 _context.Workers.Add(safaiWorker);
                 await _context.SaveChangesAsync();
+            }
+
+            // Idempotency: refuse to create duplicate wage payments for the same range
+            var rangeLabel = $"({start:yyyy-MM-dd} to {end:yyyy-MM-dd})";
+            var alreadySaved = await _context.WagePayments.AnyAsync(w =>
+                w.Notes != null && w.Notes.Contains(rangeLabel));
+            if (alreadySaved)
+            {
+                return Conflict(new { message = "Wages for this date range have already been saved to the payroll ledger." });
             }
 
             var machinePayment = new WagePayment
