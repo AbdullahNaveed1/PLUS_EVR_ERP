@@ -5,6 +5,7 @@ using ShoeFactoryApi.Data;
 
 namespace ShoeFactoryApi.Controllers
 {
+    [Authorize]
     [Route("api/[controller]")]
     [ApiController]
     public class WorkersController : ControllerBase
