@@ -102,7 +102,7 @@ app.UseAuthentication();
 app.UseAuthorization();
 app.MapControllers();
 
-// FIX #18 — backup now includes every table and requires no auth concerns (keep as-is if intended public)
+// FIX #18 — backup includes every table; restricted to Admin since it exports all business data
 app.MapGet("/api/backup/download", async (FactoryDbContext db) =>
 {
     var snapshot = new
@@ -127,7 +127,7 @@ app.MapGet("/api/backup/download", async (FactoryDbContext db) =>
     var json = JsonSerializer.Serialize(snapshot, new JsonSerializerOptions { WriteIndented = true });
     var bytes = Encoding.UTF8.GetBytes(json);
     return Results.File(bytes, "application/json", $"plus-evr-erp-backup-{DateTime.UtcNow:yyyy-MM-dd}.json");
-});
+}).RequireAuthorization(policy => policy.RequireRole("Admin"));
 
 app.MapFallbackToFile("index.html");
 app.Run();

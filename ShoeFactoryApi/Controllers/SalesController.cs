@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using ShoeFactoryApi.Data;
@@ -6,6 +7,7 @@ using ShoeFactoryApi.Models;
 
 namespace ShoeFactoryApi.Controllers
 {
+    [Authorize]
     [Route("api/sales")]
     [ApiController]
     public class SalesController : ControllerBase

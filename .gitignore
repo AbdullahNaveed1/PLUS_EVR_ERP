@@ -40,3 +40,7 @@ release/
 
 # AI tool worktrees — never commit
 .kilo/
+
+# Database dumps contain customer data and password hashes â€” never commit
+restore.sql
+*.dump
