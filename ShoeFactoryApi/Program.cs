@@ -82,7 +82,27 @@ using (var scope = app.Services.CreateScope())
     var db = scope.ServiceProvider.GetRequiredService<FactoryDbContext>();
     db.Database.Migrate();   // NOT EnsureCreated()
 
-    if (!db.Users.Any(u => u.Username == "admin"))
+    // One-time user reset: when RESET_ADMIN_PASSWORD is set, delete every existing login and
+    // recreate only the Ali and Abdullah admin accounts with that password.
+    // Remove the variable after the first successful deploy, or every restart will reset users again.
+    var resetPassword = Environment.GetEnvironmentVariable("RESET_ADMIN_PASSWORD");
+    if (!string.IsNullOrWhiteSpace(resetPassword))
+    {
+        db.Users.RemoveRange(db.Users);
+        foreach (var name in new[] { "Ali", "Abdullah" })
+        {
+            db.Users.Add(new User
+            {
+                Username = name,
+                PasswordHash = BCrypt.Net.BCrypt.HashPassword(resetPassword),
+                Role = "Admin"
+            });
+        }
+        db.SaveChanges();
+    }
+
+    // Seed a default admin only on an empty database, so it never comes back after a reset
+    if (!db.Users.Any())
     {
         var initialPassword = Environment.GetEnvironmentVariable("ADMIN_INITIAL_PASSWORD") ?? "ChangeMe_OnFirstLogin!";
         db.Users.Add(new User
