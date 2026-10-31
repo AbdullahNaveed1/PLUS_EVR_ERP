@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo } from 'react'
 import axios from 'axios'
 import EntryModule from './entry/EntryModule'
 import MaterialUsagePanel from './production/MaterialUsagePanel'
+import CustomerHistory from './customers/CustomerHistory'
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || ''
 
@@ -232,6 +233,8 @@ export default function App() {
   const [stockReportSearch, setStockReportSearch] = useState('')
 
   const [reportCustId, setReportCustId] = useState('');
+  const [historyCustomerId, setHistoryCustomerId] = useState(null)
+  const historyCustomer = customers.find(c => c.id === historyCustomerId) || null
   const [reportStartDate, setReportStartDate] = useState(
     new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]
   );
@@ -2129,7 +2132,17 @@ export default function App() {
           </div>
         )}
 
-        {activeTab === 'customers' && (
+        {activeTab === 'customers' && historyCustomer && (
+          <CustomerHistory
+            customer={historyCustomer}
+            ledger={buildCustomerLedger(historyCustomer, '', '')}
+            sales={sales}
+            invoiceNumber={getInvoiceNumber}
+            onBack={() => setHistoryCustomerId(null)}
+          />
+        )}
+
+        {activeTab === 'customers' && !historyCustomer && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
               <h2 style={{ margin: 0, fontSize: '18px', fontWeight: '700', color: '#1e293b' }}>Customer Accounts, Unique IDs & Remaining Balance</h2>
@@ -2178,7 +2191,18 @@ export default function App() {
 
                     return (
                       <tr key={c.id} style={{ borderBottom: '1px solid #f1f5f9', fontSize: '14px' }}>
-                        <td style={{ padding: '14px', fontWeight: '700', color: '#0f172a' }}>{c.name}</td>
+                        <td style={{ padding: '14px', fontWeight: '700', color: '#0f172a' }}>
+                          {c.name}
+                          <div>
+                            <button
+                              type="button"
+                              onClick={() => { setHistoryCustomerId(c.id); window.scrollTo(0, 0) }}
+                              style={{ marginTop: '6px', backgroundColor: '#714B67', color: '#fff', border: 'none', padding: '6px 10px', borderRadius: '4px', cursor: 'pointer', fontWeight: '600', fontSize: '12px' }}
+                            >
+                              📒 Full History
+                            </button>
+                          </div>
+                        </td>
                         <td style={{ padding: '14px', color: '#2563eb', fontWeight: '600' }}>{c.phone || 'N/A'}</td>
                         <td style={{ padding: '14px' }}>
                           <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>

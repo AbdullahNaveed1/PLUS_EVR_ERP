@@ -306,6 +306,24 @@ th.em-num .em-sort { justify-content: flex-end; }
 .em-banner-success { background: #f0fdf4; border: 1px solid #bbf7d0; color: #166534; }
 .em-subhead { margin-top: 18px; }
 
+/* Customer full history */
+.em-summary.em-summary-wide { grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); }
+.em-summary.em-summary-wide strong { font-size: 20px; white-space: nowrap; }
+.em-summary .em-due { border-left-color: var(--em-danger); }
+.em-summary .em-due strong { color: var(--em-danger); }
+.em-summary .em-good { border-left-color: #0284c7; }
+.em-summary .em-good strong { color: #0284c7; }
+.em-row-bill td { background: #faf5f8; }
+.em-row-muted td { background: var(--em-subtle); }
+.em-row-total td { background: #f1f5f9; }
+.em-paid { color: var(--em-success); }
+.em-table .em-subrow td { padding: 0 10px 12px 10px; }
+.em-items-wrap { overflow-x: auto; }
+.em-items { width: 100%; border-collapse: collapse; font-size: 13px; min-width: 560px; }
+.em-items th, .em-items td { padding: 5px 8px; border-bottom: 1px solid #f1f5f9; text-align: left; }
+.em-items th { font-size: 11px; text-transform: uppercase; color: var(--em-muted); background: #fff; }
+.em-items .em-num { text-align: right; }
+
 /* ---------- Tablet ---------- */
 @media (max-width: 1024px) {
   .em-root { grid-template-columns: minmax(0, 1fr); }
@@ -345,6 +363,18 @@ th.em-num .em-sort { justify-content: flex-end; }
   .em-num { text-align: left; }
   .em-remarks { max-width: none; }
   .em-badge { justify-self: start; }
+  .em-table .em-subrow td { display: block; padding: 0 10px 8px; }
+  .em-table .em-subrow td::before { content: none; }
+  .em-table .em-subrow { border: 0; margin-top: -10px; padding: 0; background: transparent; }
+  /* Bill items stay a normal table (scrolls sideways in its own box) instead of becoming cards */
+  .em-table .em-items { display: table; width: 100%; min-width: 520px; }
+  .em-table .em-items thead { display: table-header-group; }
+  .em-table .em-items tbody { display: table-row-group; }
+  .em-table .em-items tr { display: table-row; border: 0; border-radius: 0; margin: 0; padding: 0; background: transparent; }
+  .em-table .em-items th,
+  .em-table .em-items td { display: table-cell; width: auto; padding: 4px 6px; border-bottom: 1px solid #f1f5f9; }
+  .em-table .em-items td::before { content: none; }
+  .em-table .em-items .em-num { text-align: right; }
 }
 
 @media (max-width: 420px) {
