@@ -14,6 +14,10 @@ npm run desktop
 
 `npm run desktop:package` creates a Windows installer build in the `release` folder. The API must still be available on `http://localhost:5008` for login and data access.
 
+## Modules
+
+- **Material Entry** (goods received): see [src/entry/README.md](src/entry/README.md) for the data model, adding materials and swapping the storage layer.
+
 ## Web Development
 
 Use `npm run dev` for the Vite development server.

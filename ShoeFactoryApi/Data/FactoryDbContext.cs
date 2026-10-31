@@ -22,6 +22,7 @@ namespace ShoeFactoryApi.Data
         public DbSet<RawMaterial> RawMaterials => Set<RawMaterial>();
         public DbSet<ProductionRecord> ProductionRecords => Set<ProductionRecord>();
         public DbSet<BomEntry> BomEntries => Set<BomEntry>();
+        public DbSet<MaterialEntry> MaterialEntries => Set<MaterialEntry>();
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
@@ -100,6 +101,13 @@ namespace ShoeFactoryApi.Data
 
             modelBuilder.Entity<BomEntry>()
                 .HasIndex(b => b.ArticleNumber);
+
+            // ===== Material Entry (goods receipt) =====
+            modelBuilder.Entity<MaterialEntry>().Property(e => e.Quantity).HasPrecision(18, 4);
+            modelBuilder.Entity<MaterialEntry>().Property(e => e.Rate).HasPrecision(18, 4);
+            modelBuilder.Entity<MaterialEntry>().Property(e => e.Amount).HasPrecision(18, 2);
+            modelBuilder.Entity<MaterialEntry>().HasIndex(e => e.Date);
+            modelBuilder.Entity<MaterialEntry>().HasIndex(e => e.Material);
         }
     }
 }

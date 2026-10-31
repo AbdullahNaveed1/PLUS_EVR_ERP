@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo } from 'react'
 import axios from 'axios'
+import EntryModule from './entry/EntryModule'
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || ''
 
@@ -1807,6 +1808,7 @@ export default function App() {
     { id: 'sales', label: 'Billing' },
     { id: 'production', label: '🏭 Production' },
     { id: 'rawmaterials', label: '🧱 Raw Materials' },
+    { id: 'entry', label: '📥 Material Entry' },
     { id: 'costing', label: '💰 Costing / BOM' },
     { id: 'reports', label: '📊 گاہک کی رپورٹ (Reports)' },
     { id: 'expenses', label: 'Expenses' },
@@ -3042,6 +3044,8 @@ export default function App() {
         )}
 
         {/* ============================== Raw Materials tab ============================== */}
+        {activeTab === 'entry' && <EntryModule token={token} username={username} />}
+
         {activeTab === 'rawmaterials' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
             <h2 style={{ margin: 0, fontSize: '18px', fontWeight: '700', color: '#1e293b' }}>🧱 Raw Material Inventory</h2>

@@ -141,7 +141,8 @@ app.MapGet("/api/backup/download", async (FactoryDbContext db) =>
         // ===== NEW =====
         RawMaterials = await db.RawMaterials.AsNoTracking().ToListAsync(),
         ProductionRecords = await db.ProductionRecords.AsNoTracking().ToListAsync(),
-        BomEntries = await db.BomEntries.AsNoTracking().ToListAsync()
+        BomEntries = await db.BomEntries.AsNoTracking().ToListAsync(),
+        MaterialEntries = await db.MaterialEntries.AsNoTracking().ToListAsync()
     };
 
     var json = JsonSerializer.Serialize(snapshot, new JsonSerializerOptions { WriteIndented = true });
