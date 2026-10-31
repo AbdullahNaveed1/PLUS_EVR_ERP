@@ -13,6 +13,8 @@ namespace ShoeFactoryApi.Models
         public decimal Discount { get; set; }
         public string TransportCompany { get; set; } = "N/A";
         public string BuiltyNo { get; set; } = "N/A";
+        // Manual bill number from the physical bill book; repeats allowed
+        public string BillNo { get; set; } = string.Empty;
         public DateTime Date { get; set; } = DateTime.UtcNow;
 
         [Column(TypeName = "jsonb")]

@@ -201,13 +201,14 @@ export default function App() {
   const [saleCustomerRegion, setSaleCustomerRegion] = useState('Punjab')
   const [transportCompany, setTransportCompany] = useState('')
   const [builtyNo, setBuiltyNo] = useState('')
+  const [billNo, setBillNo] = useState('')
 
   const [cartItems, setCartItems] = useState([
     { productId: '', model: '', size: '', qty: '', unitType: 'dozens', price: '' }
   ])
 
   const [editingSaleId, setEditingSaleId] = useState(null)
-  const [editSaleInputs, setEditSaleInputs] = useState({ transportCompany: '', builtyNo: '', discountPerPair: {} })
+  const [editSaleInputs, setEditSaleInputs] = useState({ transportCompany: '', builtyNo: '', billNo: '', discountPerPair: {} })
   const [selectedSaleIds, setSelectedSaleIds] = useState([])
 
   // ===== NEW: Production / Raw Materials / BOM states =====
@@ -769,6 +770,10 @@ export default function App() {
   const handleGenerateMultiItemBill = async (e) => {
     e.preventDefault()
     if (!saleCustomerName || !saleCustomerUniqueId || cartItems.length === 0) return
+    if (!billNo.trim()) {
+      alert('Please enter the Bill No from your physical bill book.')
+      return
+    }
 
     let grossTotal = 0;
 
@@ -810,6 +815,7 @@ export default function App() {
       discount: 0,
       transportCompany: transportCompany || 'N/A',
       builtyNo: builtyNo || 'N/A',
+      billNo: billNo.trim(),
       date: new Date().toISOString()
     }
 
@@ -832,6 +838,7 @@ export default function App() {
     setSaleCustomerUniqueId('')
     setTransportCompany('')
     setBuiltyNo('')
+    setBillNo('')
     setCartItems([{ productId: '', model: '', size: '', qty: '', unitType: 'dozens', price: '' }])
   }
 
@@ -862,7 +869,8 @@ export default function App() {
           discount,
           total: rawTotal - discount,
           transportCompany: editSaleInputs.transportCompany || s.transportCompany || 'N/A',
-          builtyNo: editSaleInputs.builtyNo || s.builtyNo || 'N/A'
+          builtyNo: editSaleInputs.builtyNo || s.builtyNo || 'N/A',
+          billNo: editSaleInputs.billNo?.trim() || s.billNo || ''
         };
       }
       return s;
@@ -987,6 +995,7 @@ export default function App() {
             <div class="invoice-details">
               <h3 style="margin: 0 0 4px 0; color: #1e293b;">WHOLESALE INVOICE</h3>
               <div><strong>Invoice No:</strong> ${invoiceNumber}</div>
+              <div><strong>Bill No:</strong> ${saleRecord.billNo || 'N/A'}</div>
               <div><strong>Date:</strong> ${saleRecord.date}</div>
               <div><strong>Region:</strong> ${saleRecord.region || 'Punjab'}</div>
             </div>
@@ -1139,6 +1148,7 @@ export default function App() {
             <div class="invoice-details">
               <h3 style="margin: 0 0 4px 0; color: #1e293b;">WHOLESALE INVOICE</h3>
               <div><strong>Invoice No:</strong> ${invoiceNumber}</div>
+              <div><strong>Bill No:</strong> ${saleRecord.billNo || 'N/A'}</div>
               <div><strong>Date:</strong> ${saleRecord.date}</div>
               <div><strong>Region:</strong> ${saleRecord.region || 'Punjab'}</div>
             </div>
@@ -1208,7 +1218,7 @@ export default function App() {
 
       return `
         <section class="invoice">
-          <header><div><h1>PLUS EVR ERP Factory</h1><div>Wholesale Footwear Manufacturing & Ledger</div></div><div><strong>Invoice No:</strong> ${invoiceNumber}<br><strong>Date:</strong> ${sale.date}<br><strong>Region:</strong> ${sale.region || 'Punjab'}</div></header>
+          <header><div><h1>PLUS EVR ERP Factory</h1><div>Wholesale Footwear Manufacturing & Ledger</div></div><div><strong>Invoice No:</strong> ${invoiceNumber}<br><strong>Bill No:</strong> ${sale.billNo || 'N/A'}<br><strong>Date:</strong> ${sale.date}<br><strong>Region:</strong> ${sale.region || 'Punjab'}</div></header>
           <div class="meta"><strong>Customer:</strong> ${sale.customer} (${sale.customerId || 'N/A'}) <span><strong>Transport:</strong> ${sale.transportCompany || 'N/A'} | <strong>Builty No:</strong> ${sale.builtyNo || 'N/A'}</span></div>
           <table><thead><tr><th>#</th><th>Item No.</th><th>Description</th><th>Quantity</th><th>Bill Rate/Pair</th><th>Bill Rate</th></tr></thead><tbody>${items}</tbody></table>
           <div class="total"><strong>Bill Rate Total: Rs. ${numberOrZero(sale.rawTotal || sale.total).toLocaleString()}</strong>${sale.discount > 0 ? `<br>Discount Applied Later: - Rs. ${numberOrZero(sale.discount).toLocaleString()}<br><strong>Net Payable: Rs. ${numberOrZero(sale.total).toLocaleString()}</strong>` : ''}</div>
@@ -1274,6 +1284,7 @@ export default function App() {
     const message = `*PLUS EVR ERP - Invoice Dispatch* 🧾\n` +
       `-----------------------------------\n` +
       `👤 *Customer:* ${saleRecord.customer} (${saleRecord.customerId || 'N/A'})\n` +
+      `🧾 *Bill No:* ${saleRecord.billNo || 'N/A'}\n` +
       `📅 *Date:* ${saleRecord.date}\n` +
       `🚚 *Transport:* ${saleRecord.transportCompany || 'N/A'}\n` +
       `📦 *Builty No:* ${saleRecord.builtyNo || 'N/A'}\n` +
@@ -1405,26 +1416,76 @@ export default function App() {
     printWindow.document.close()
   }
 
-  const handlePrintCustomerReport = (customer, periodSales, periodPayments, openingApprox, netDue) => {
+  // Date-wise khata for one customer: opening balance, then every bill and payment in date order with a running balance
+  const buildCustomerLedger = (customer, startISO, endISO) => {
+    const from = startISO || '0000-01-01'
+    const to = endISO || '9999-12-31'
+    const dayOf = value => String(value || '').split('T')[0]
+
+    const billEntries = sales
+      .filter(s => s.customerId === customer.phone)
+      .map(s => ({
+        key: `s-${s.id}`,
+        kind: 'bill',
+        date: dayOf(s.date),
+        sortId: s.id,
+        billNo: s.billNo || '',
+        invoiceNo: getInvoiceNumber(s),
+        transportCompany: s.transportCompany || 'N/A',
+        builtyNo: s.builtyNo || 'N/A',
+        pairs: (s.lineItems || []).reduce((acc, item) => acc + numberOrZero(item.pairs), 0),
+        debit: numberOrZero(s.total),
+        credit: 0
+      }))
+    const paymentEntries = payments
+      .filter(p => p.customerId === customer.phone || p.customer === customer.name)
+      .map(p => ({ key: `p-${p.id}`, kind: 'payment', date: dayOf(p.date), sortId: p.id, debit: 0, credit: numberOrZero(p.amount) }))
+
+    // Same day: bills first, then payments, each in the order they were entered
+    const allEntries = [...billEntries, ...paymentEntries].sort((a, b) =>
+      a.date.localeCompare(b.date) ||
+      (a.kind === b.kind ? a.sortId - b.sortId : (a.kind === 'bill' ? -1 : 1)))
+
+    let balance = numberOrZero(customer.balance)
+    allEntries.filter(e => e.date < from).forEach(e => { balance += e.debit - e.credit })
+    const openingBalance = balance
+
+    const entries = allEntries
+      .filter(e => e.date >= from && e.date <= to)
+      .map(e => {
+        balance += e.debit - e.credit
+        return { ...e, balance }
+      })
+
+    return {
+      openingBalance,
+      entries,
+      closingBalance: balance,
+      totalBilled: entries.reduce((acc, e) => acc + e.debit, 0),
+      totalPaid: entries.reduce((acc, e) => acc + e.credit, 0),
+      netDue: allEntries.reduce((acc, e) => acc + e.debit - e.credit, numberOrZero(customer.balance))
+    }
+  }
+
+  const formatLedgerBalance = amount =>
+    amount < 0 ? `Adv: Rs. ${Math.abs(amount).toLocaleString()}` : `Rs. ${amount.toLocaleString()}`
+
+  const describeLedgerEntry = e => e.kind === 'bill'
+    ? `بل نمبر (Bill No): ${e.billNo || '—'} | Invoice: ${e.invoiceNo} | ${formatPairs(e.pairs)} جوڑے | ٹرانسپورٹ: ${e.transportCompany}, بلٹی: ${e.builtyNo}`
+    : 'نقد وصولی (Cash Payment)'
+
+  const handlePrintCustomerReport = (customer, ledger) => {
     const printWindow = window.open('', '_blank', 'width=800,height=600');
 
-    const salesRows = periodSales.length === 0
-      ? `<tr><td colspan="3" style="text-align:center; color:#94a3b8;">اس مدت میں کوئی نیا بل نہیں بنایا گیا۔</td></tr>`
-      : periodSales.map(s => `
+    const ledgerRows = ledger.entries.length === 0
+      ? `<tr><td colspan="5" style="text-align:center; color:#94a3b8;">اس منتخب کردہ مدت میں کوئی لین دین نہیں ہوا۔</td></tr>`
+      : ledger.entries.map(e => `
           <tr>
-            <td>${s.date}</td>
-            <td>بل نمبر #${s.id} (${s.region || 'Punjab'}) [ٹرانسپورٹ: ${s.transportCompany || 'N/A'}, بلٹی: ${s.builtyNo || 'N/A'}]</td>
-            <td style="color: #16a34a; font-weight: bold;">Rs. ${s.total.toLocaleString()}</td>
-          </tr>
-        `).join('');
-
-    const paymentsRows = periodPayments.length === 0
-      ? `<tr><td colspan="3" style="text-align:center; color:#94a3b8;">اس مدت میں کوئی رقم وصول نہیں ہوئی۔</td></tr>`
-      : periodPayments.map(p => `
-          <tr>
-            <td>${p.date}</td>
-            <td>نقد وصولی (Cash Payment)</td>
-            <td style="color: #2563eb; font-weight: bold;">Rs. ${p.amount.toLocaleString()}</td>
+            <td>${e.date}</td>
+            <td>${describeLedgerEntry(e)}</td>
+            <td style="color: #16a34a; font-weight: bold;">${e.debit ? `Rs. ${e.debit.toLocaleString()}` : ''}</td>
+            <td style="color: #2563eb; font-weight: bold;">${e.credit ? `Rs. ${e.credit.toLocaleString()}` : ''}</td>
+            <td style="font-weight: bold;">${formatLedgerBalance(e.balance)}</td>
           </tr>
         `).join('');
 
@@ -1463,36 +1524,38 @@ export default function App() {
             <p><strong>رپورٹ کی مدت:</strong> ${reportStartDate} سے ${reportEndDate} تک</p>
           </div>
 
-          <h3 style="color: #1e293b; margin-bottom: 5px;">📦 اس مدت کے بلز (Sales / Billed)</h3>
+          <h3 style="color: #1e293b; margin-bottom: 5px;">📒 تاریخ وار کھاتہ (Date-wise Ledger)</h3>
           <table>
             <thead>
               <tr>
                 <th>تاریخ</th>
                 <th>تفصیل</th>
-                <th>رقم (PKR)</th>
+                <th>بل (Debit)</th>
+                <th>وصولی (Credit)</th>
+                <th>بقایا (Balance)</th>
               </tr>
             </thead>
             <tbody>
-              ${salesRows}
-            </tbody>
-          </table>
-
-          <h3 style="color: #1e293b; margin-bottom: 5px; margin-top: 25px;">💵 اس مدت میں موصول ہونے والی رقم (Payments Received)</h3>
-          <table>
-            <thead>
-              <tr>
-                <th>تاریخ</th>
-                <th>تفصیل</th>
-                <th>وصول شدہ رقم (PKR)</th>
+              <tr style="background: #f8fafc;">
+                <td>${reportStartDate || '—'}</td>
+                <td><strong>سابقہ بقایا (Opening Balance)</strong></td>
+                <td></td>
+                <td></td>
+                <td style="font-weight: bold;">${formatLedgerBalance(ledger.openingBalance)}</td>
               </tr>
-            </thead>
-            <tbody>
-              ${paymentsRows}
+              ${ledgerRows}
+              <tr style="background: #f1f5f9; font-weight: bold;">
+                <td>${reportEndDate || '—'}</td>
+                <td>اختتامی بقایا (Closing Balance)</td>
+                <td>Rs. ${ledger.totalBilled.toLocaleString()}</td>
+                <td>Rs. ${ledger.totalPaid.toLocaleString()}</td>
+                <td>${formatLedgerBalance(ledger.closingBalance)}</td>
+              </tr>
             </tbody>
           </table>
 
           <div class="summary">
-            <p style="margin: 5px 0; color: #dc2626;">کل واجب الادا رقم (Total Net Dues): Rs. ${netDue.toLocaleString()}</p>
+            <p style="margin: 5px 0; color: #dc2626;">کل واجب الادا رقم آج تک (Total Net Dues): ${formatLedgerBalance(ledger.netDue)}</p>
           </div>
 
           <div class="footer">
@@ -1511,26 +1574,25 @@ export default function App() {
     printWindow.document.close();
   };
 
-  const handleSendReportWhatsApp = (customer, periodSales, periodPayments, netDue) => {
-    handlePrintCustomerReport(customer, periodSales, periodPayments, 0, netDue);
+  const handleSendReportWhatsApp = (customer, ledger) => {
+    handlePrintCustomerReport(customer, ledger);
 
-    const salesSummary = periodSales.length > 0
-      ? periodSales.map(s => `• بل #${s.id} (${s.date}) [ٹرانسپورٹ: ${s.transportCompany || 'N/A'}]: Rs. ${s.total.toLocaleString()}`).join('\n')
-      : '• کوئی نیا بل نہیں';
+    const ledgerSummary = ledger.entries.length > 0
+      ? ledger.entries.map(e => e.kind === 'bill'
+          ? `• ${e.date} | بل نمبر ${e.billNo || '—'}: + Rs. ${e.debit.toLocaleString()} → ${formatLedgerBalance(e.balance)}`
+          : `• ${e.date} | وصولی: - Rs. ${e.credit.toLocaleString()} → ${formatLedgerBalance(e.balance)}`).join('\n')
+      : '• اس مدت میں کوئی لین دین نہیں';
 
-    const paymentsSummary = periodPayments.length > 0
-      ? periodPayments.map(p => `• وصولی (${p.date}): Rs. ${p.amount.toLocaleString()}`).join('\n')
-      : '• کوئی وصولی نہیں';
-
-    const message = `*PLUS EVR ERP - گاہک کی ہفتہ وار رپورٹ* 📊\n` +
+    const message = `*PLUS EVR ERP - گاہک کا کھاتہ* 📒\n` +
       `-----------------------------------\n` +
       `👤 *گاہک:* ${customer.name} (${customer.phone})\n` +
       `📅 *مدت:* ${reportStartDate} تا ${reportEndDate}\n` +
       `-----------------------------------\n` +
-      `📦 *بلز کی تفصیل:*\n${salesSummary}\n\n` +
-      `💵 *وصولیوں کی تفصیل:*\n${paymentsSummary}\n` +
+      `📌 *سابقہ بقایا:* ${formatLedgerBalance(ledger.openingBalance)}\n` +
+      `${ledgerSummary}\n` +
+      `📌 *اختتامی بقایا:* ${formatLedgerBalance(ledger.closingBalance)}\n` +
       `-----------------------------------\n` +
-      `🔴 *کل بقایا جات (Net Dues):* *Rs. ${netDue.toLocaleString()}*\n` +
+      `🔴 *کل بقایا جات (Net Dues):* *${formatLedgerBalance(ledger.netDue)}*\n` +
       `-----------------------------------\n` +
       `_براہ کرم اپنے کھاتے کی تصدیق کریں۔ شکریہ!_ 🙏`;
 
@@ -2380,41 +2442,25 @@ export default function App() {
                 const selectedCust = customers.find(c => c.id.toString() === reportCustId);
                 if (!selectedCust) return null;
 
-                const startISO = reportStartDate
-                const endISO = reportEndDate
-                const periodSales = sales.filter(s => {
-                  const sd = String(s.date || '').split('T')[0]
-                  return s.customerId === selectedCust.phone && sd >= startISO && sd <= endISO
-                })
-                const periodPayments = payments.filter(p => {
-                  const pd = String(p.date || '').split('T')[0]
-                  return (p.customerId === selectedCust.phone || p.customer === selectedCust.name) &&
-                    pd >= startISO && pd <= endISO
-                })
-
-                const allTimeBills = sales.filter(s => s.customerId === selectedCust.phone).reduce((acc, b) => acc + b.total, 0);
-                const allTimePayments = payments.filter(p => p.customerId === selectedCust.phone || p.customer === selectedCust.name).reduce((acc, p) => acc + p.amount, 0);
-                const netDue = Number(selectedCust.balance) + allTimeBills - allTimePayments;
-
-                const totalBilledPeriod = periodSales.reduce((acc, s) => acc + s.total, 0);
-                const totalPaidPeriod = periodPayments.reduce((acc, p) => acc + p.amount, 0);
+                const ledger = buildCustomerLedger(selectedCust, reportStartDate, reportEndDate)
+                const cellStyle = { padding: '10px', borderBottom: '1px solid #f1f5f9' }
 
                 return (
                   <div style={{ marginTop: '20px', borderTop: '1px solid #e2e8f0', paddingTop: '20px' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '15px', marginBottom: '20px', backgroundColor: '#f8fafc', padding: '15px', borderRadius: '8px', border: '1px solid #e2e8f0' }}>
                       <div>
                         <h3 style={{ margin: '0 0 5px 0', color: '#1e293b' }}>{selectedCust.name} <span style={{ fontSize: '13px', color: '#2563eb' }}>({selectedCust.phone})</span></h3>
-                        <p style={{ margin: 0, fontSize: '13px', color: '#64748b' }}>علاقہ: {selectedCust.region || 'Punjab'} | مدت: {reportStartDate} سے {reportEndDate}</p>
+                        <p style={{ margin: 0, fontSize: '13px', color: '#64748b' }}>علاقہ: {selectedCust.region || 'Punjab'} | مدت: {reportStartDate || 'شروع'} سے {reportEndDate || 'آج'}</p>
                       </div>
                       <div style={{ display: 'flex', gap: '10px' }}>
                         <button
-                          onClick={() => handlePrintCustomerReport(selectedCust, periodSales, periodPayments, 0, netDue)}
+                          onClick={() => handlePrintCustomerReport(selectedCust, ledger)}
                           style={{ backgroundColor: '#2563eb', color: '#fff', border: 'none', padding: '10px 16px', borderRadius: '6px', fontWeight: '700', cursor: 'pointer', fontSize: '13px' }}
                         >
-                          🖨️ پرنٹ / PDF رپورٹ
+                          🖨️ پرنٹ / PDF کھاتہ
                         </button>
                         <button
-                          onClick={() => handleSendReportWhatsApp(selectedCust, periodSales, periodPayments, netDue)}
+                          onClick={() => handleSendReportWhatsApp(selectedCust, ledger)}
                           style={{ backgroundColor: '#16a34a', color: '#fff', border: 'none', padding: '10px 16px', borderRadius: '6px', fontWeight: '700', cursor: 'pointer', fontSize: '13px' }}
                         >
                           💬 واٹس ایپ پر بھیجیں
@@ -2422,52 +2468,63 @@ export default function App() {
                       </div>
                     </div>
 
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '15px', marginBottom: '20px' }}>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '15px', marginBottom: '20px' }}>
+                      <div style={{ backgroundColor: '#f8fafc', border: '1px solid #e2e8f0', padding: '15px', borderRadius: '8px' }}>
+                        <p style={{ margin: '0 0 5px 0', fontSize: '12px', fontWeight: '700', color: '#475569' }}>سابقہ بقایا (Opening Balance)</p>
+                        <p style={{ margin: 0, fontSize: '20px', fontWeight: '800', color: '#334155' }}>{formatLedgerBalance(ledger.openingBalance)}</p>
+                      </div>
                       <div style={{ backgroundColor: '#f0fdf4', border: '1px solid #bbf7d0', padding: '15px', borderRadius: '8px' }}>
                         <p style={{ margin: '0 0 5px 0', fontSize: '12px', fontWeight: '700', color: '#15803d' }}>اس مدت میں کل بلنگ (Billed)</p>
-                        <p style={{ margin: 0, fontSize: '20px', fontWeight: '800', color: '#16a34a' }}>Rs. {totalBilledPeriod.toLocaleString()}</p>
+                        <p style={{ margin: 0, fontSize: '20px', fontWeight: '800', color: '#16a34a' }}>Rs. {ledger.totalBilled.toLocaleString()}</p>
                       </div>
                       <div style={{ backgroundColor: '#eff6ff', border: '1px solid #bfdbfe', padding: '15px', borderRadius: '8px' }}>
                         <p style={{ margin: '0 0 5px 0', fontSize: '12px', fontWeight: '700', color: '#1d4ed8' }}>اس مدت میں وصولی (Paid)</p>
-                        <p style={{ margin: 0, fontSize: '20px', fontWeight: '800', color: '#2563eb' }}>Rs. {totalPaidPeriod.toLocaleString()}</p>
+                        <p style={{ margin: 0, fontSize: '20px', fontWeight: '800', color: '#2563eb' }}>Rs. {ledger.totalPaid.toLocaleString()}</p>
                       </div>
                       <div style={{ backgroundColor: '#fef2f2', border: '1px solid #fecaca', padding: '15px', borderRadius: '8px' }}>
-                        <p style={{ margin: '0 0 5px 0', fontSize: '12px', fontWeight: '700', color: '#991b1b' }}>کل بقایا رقم (Total Net Dues)</p>
-                        <p style={{ margin: 0, fontSize: '20px', fontWeight: '800', color: '#dc2626' }}>Rs. {netDue.toLocaleString()}</p>
+                        <p style={{ margin: '0 0 5px 0', fontSize: '12px', fontWeight: '700', color: '#991b1b' }}>کل بقایا رقم آج تک (Total Net Dues)</p>
+                        <p style={{ margin: 0, fontSize: '20px', fontWeight: '800', color: '#dc2626' }}>{formatLedgerBalance(ledger.netDue)}</p>
                       </div>
                     </div>
 
-                    <h4 style={{ margin: '0 0 10px 0', fontSize: '14px', color: '#475569' }}>اس مدت کے تمام بلز اور ادائیگیاں</h4>
+                    <h4 style={{ margin: '0 0 10px 0', fontSize: '14px', color: '#475569' }}>📒 تاریخ وار کھاتہ (Date-wise Ledger)</h4>
                     <div style={{ overflowX: 'auto' }}>
-                      <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'right', fontSize: '13px' }}>
+                      <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'right', fontSize: '13px', minWidth: '760px' }}>
                         <thead>
                           <tr style={{ backgroundColor: '#f1f5f9', color: '#475569', borderBottom: '1px solid #e2e8f0' }}>
-                            <th style={{ padding: '10px' }}>تاریخ</th>
-                            <th style={{ padding: '10px' }}>قسم (Type)</th>
-                            <th style={{ padding: '10px' }}>رقم (PKR)</th>
+                            <th style={{ padding: '10px' }}>تاریخ (Date)</th>
+                            <th style={{ padding: '10px' }}>تفصیل (Detail)</th>
+                            <th style={{ padding: '10px' }}>بل (Debit)</th>
+                            <th style={{ padding: '10px' }}>وصولی (Credit)</th>
+                            <th style={{ padding: '10px' }}>بقایا (Balance)</th>
                           </tr>
                         </thead>
                         <tbody>
-                          {periodSales.length === 0 && periodPayments.length === 0 ? (
-                            <tr><td colSpan="3" style={{ padding: '20px', textAlign: 'center', color: '#94a3b8' }}>اس منتخب کردہ مدت میں کوئی لین دین نہیں ہوا۔</td></tr>
-                          ) : (
-                            <>
-                              {periodSales.map(s => (
-                                <tr key={`s-${s.id}`} style={{ borderBottom: '1px solid #f1f5f9' }}>
-                                  <td style={{ padding: '10px' }}>{s.date}</td>
-                                  <td style={{ padding: '10px', fontWeight: '600' }}>بل نمبر #${s.id} (${s.region || 'Punjab'}) - ترانسپورٹ: {s.transportCompany || 'N/A'}, بلٹی: {s.builtyNo || 'N/A'}</td>
-                                  <td style={{ padding: '10px', color: '#16a34a', fontWeight: '700' }}>+ Rs. {s.total.toLocaleString()}</td>
-                                </tr>
-                              ))}
-                              {periodPayments.map(p => (
-                                <tr key={`p-${p.id}`} style={{ borderBottom: '1px solid #f1f5f9' }}>
-                                  <td style={{ padding: '10px' }}>{p.date}</td>
-                                  <td style={{ padding: '10px', fontWeight: '600' }}>نقد وصولی (Cash Payment)</td>
-                                  <td style={{ padding: '10px', color: '#2563eb', fontWeight: '700' }}>- Rs. {p.amount.toLocaleString()}</td>
-                                </tr>
-                              ))}
-                            </>
-                          )}
+                          <tr style={{ backgroundColor: '#f8fafc' }}>
+                            <td style={cellStyle}>{reportStartDate || '—'}</td>
+                            <td style={{ ...cellStyle, fontWeight: '700' }}>سابقہ بقایا (Opening Balance)</td>
+                            <td style={cellStyle}></td>
+                            <td style={cellStyle}></td>
+                            <td style={{ ...cellStyle, fontWeight: '700' }}>{formatLedgerBalance(ledger.openingBalance)}</td>
+                          </tr>
+                          {ledger.entries.length === 0 ? (
+                            <tr><td colSpan="5" style={{ padding: '20px', textAlign: 'center', color: '#94a3b8' }}>اس منتخب کردہ مدت میں کوئی لین دین نہیں ہوا۔</td></tr>
+                          ) : ledger.entries.map(e => (
+                            <tr key={e.key}>
+                              <td style={cellStyle}>{e.date}</td>
+                              <td style={{ ...cellStyle, fontWeight: '600' }}>{describeLedgerEntry(e)}</td>
+                              <td style={{ ...cellStyle, color: '#16a34a', fontWeight: '700' }}>{e.debit ? `Rs. ${e.debit.toLocaleString()}` : ''}</td>
+                              <td style={{ ...cellStyle, color: '#2563eb', fontWeight: '700' }}>{e.credit ? `Rs. ${e.credit.toLocaleString()}` : ''}</td>
+                              <td style={{ ...cellStyle, fontWeight: '700', color: e.balance < 0 ? '#0284c7' : '#dc2626' }}>{formatLedgerBalance(e.balance)}</td>
+                            </tr>
+                          ))}
+                          <tr style={{ backgroundColor: '#f1f5f9', fontWeight: '800' }}>
+                            <td style={cellStyle}>{reportEndDate || '—'}</td>
+                            <td style={cellStyle}>اختتامی بقایا (Closing Balance)</td>
+                            <td style={{ ...cellStyle, color: '#16a34a' }}>Rs. {ledger.totalBilled.toLocaleString()}</td>
+                            <td style={{ ...cellStyle, color: '#2563eb' }}>Rs. {ledger.totalPaid.toLocaleString()}</td>
+                            <td style={cellStyle}>{formatLedgerBalance(ledger.closingBalance)}</td>
+                          </tr>
                         </tbody>
                       </table>
                     </div>
@@ -2607,6 +2664,18 @@ export default function App() {
                     style={{ padding: '10px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '14px', width: '100%', boxSizing: 'border-box' }}
                   />
                 </div>
+
+                <div>
+                  <label style={{ display: 'block', fontSize: '12px', fontWeight: '700', color: '#475569', marginBottom: '5px' }}>Bill No (Physical Bill Book) *</label>
+                  <input
+                    type="text"
+                    placeholder="e.g. 1452"
+                    value={billNo}
+                    onChange={e => setBillNo(e.target.value)}
+                    required
+                    style={{ padding: '10px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '14px', width: '100%', boxSizing: 'border-box', fontWeight: '700' }}
+                  />
+                </div>
               </div>
 
               <h4 style={{ margin: '15px 0 10px 0', fontSize: '14px', color: '#475569' }}>Cart Line Items (Article, Qty & Bill Rate)</h4>
@@ -2707,7 +2776,7 @@ export default function App() {
                       />
                     </th>
                     <th style={{ padding: '14px' }}>Date</th>
-                    <th style={{ padding: '14px' }}>Invoice No.</th>
+                    <th style={{ padding: '14px' }}>Bill No / Invoice No.</th>
                     <th style={{ padding: '14px' }}>Customer (ID)</th>
                     <th style={{ padding: '14px' }}>Region</th>
                     <th style={{ padding: '14px' }}>Transport & Builty</th>
@@ -2729,7 +2798,20 @@ export default function App() {
                           />
                         </td>
                         <td style={{ padding: '14px', color: '#64748b' }}>{s.date}</td>
-                        <td style={{ padding: '14px', color: '#714B67', fontWeight: '700' }}>{getInvoiceNumber(s)}</td>
+                        <td style={{ padding: '14px', color: '#714B67', fontWeight: '700' }}>
+                          {isEditing ? (
+                            <input
+                              type="text"
+                              placeholder="Bill No"
+                              defaultValue={s.billNo}
+                              onChange={e => setEditSaleInputs({...editSaleInputs, billNo: e.target.value})}
+                              style={{ padding: '4px 6px', fontSize: '12px', borderRadius: '4px', border: '1px solid #cbd5e1', width: '100px', marginBottom: '4px' }}
+                            />
+                          ) : (
+                            <div style={{ color: s.billNo ? '#0f172a' : '#94a3b8' }}>Bill No: {s.billNo || '—'}</div>
+                          )}
+                          <div style={{ fontSize: '12px' }}>{getInvoiceNumber(s)}</div>
+                        </td>
                         <td style={{ padding: '14px', fontWeight: '700', color: '#0f172a' }}>{s.customer} ({s.customerId})</td>
                         <td style={{ padding: '14px', color: '#475569' }}>{s.region || 'Punjab'}</td>
                         <td style={{ padding: '14px' }}>
@@ -2802,6 +2884,7 @@ export default function App() {
                                   setEditSaleInputs({
                                     transportCompany: s.transportCompany || '',
                                     builtyNo: s.builtyNo || '',
+                                    billNo: s.billNo || '',
                                     discountPerPair: Object.fromEntries((s.lineItems || []).map((item, index) => [index, item.discountPerPair || 0]))
                                   });
                                 }}

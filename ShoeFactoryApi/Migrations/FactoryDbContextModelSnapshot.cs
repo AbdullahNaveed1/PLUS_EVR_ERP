@@ -323,6 +323,10 @@ namespace ShoeFactoryApi.Migrations
 
                     NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
 
+                    b.Property<string>("BillNo")
+                        .IsRequired()
+                        .HasColumnType("text");
+
                     b.Property<string>("BuiltyNo")
                         .IsRequired()
                         .HasColumnType("text");

@@ -83,6 +83,11 @@ namespace ShoeFactoryApi.Controllers
             sale.Region = payload.TryGetProperty("region", out var reg) ? (reg.GetString() ?? "Punjab") : "Punjab";
             sale.TransportCompany = payload.TryGetProperty("transportCompany", out var tc) ? (tc.GetString() ?? "N/A") : "N/A";
             sale.BuiltyNo = payload.TryGetProperty("builtyNo", out var bn) ? (bn.GetString() ?? "N/A") : "N/A";
+
+            // Bill No is required for new bills; older bills without one may still be edited
+            var billNo = GetString(payload, "billNo")?.Trim();
+            if (!string.IsNullOrEmpty(billNo)) sale.BillNo = billNo;
+            else if (sale.Id == 0) { error = "billNo is required."; return false; }
             sale.Date = payload.TryGetProperty("date", out var dt) && DateTime.TryParse(dt.GetString(), out var parsed)
                 ? DateTime.SpecifyKind(parsed, DateTimeKind.Utc)
                 : DateTime.UtcNow;
@@ -168,6 +173,7 @@ namespace ShoeFactoryApi.Controllers
                 discount = sale.Discount,
                 transportCompany = sale.TransportCompany,
                 builtyNo = sale.BuiltyNo,
+                billNo = sale.BillNo,
                 date = sale.Date.ToString("yyyy-MM-dd"),
                 lineItems
             };
