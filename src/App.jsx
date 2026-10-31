@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo } from 'react'
 import axios from 'axios'
 import EntryModule from './entry/EntryModule'
+import MaterialUsagePanel from './production/MaterialUsagePanel'
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || ''
 
@@ -146,7 +147,6 @@ export default function App() {
   const [inventory, setInventory] = useState([])
   const [customers, setCustomers] = useState([])
   const [expenses, setExpenses] = useState([])
-  const [tours, setTours] = useState([])
   const [workers, setWorkers] = useState([])
   const [wagePayments, setWagePayments] = useState([])
 
@@ -181,7 +181,6 @@ export default function App() {
   const [newItem, setNewItem] = useState({ articleNumber: '', model: '', size: '', color: '', qty: '', pricePunjab: '', priceSindh: '' })
   const [newCust, setNewCust] = useState({ name: '', description: null, region: 'Punjab', balance: '' })
   const [newExp, setNewExp] = useState({ category: '', amount: '', notes: '', date: new Date().toISOString().split('T')[0] })
-  const [newTour, setNewTour] = useState({ rep: '', region: '', cost: '', ordersValue: '', date: new Date().toISOString().split('T')[0] })
 
   const [paymentInputs, setPaymentInputs] = useState({})
   const [updateStockInputs, setUpdateStockInputs] = useState({})
@@ -212,10 +211,9 @@ export default function App() {
   const [editSaleInputs, setEditSaleInputs] = useState({ transportCompany: '', builtyNo: '', billNo: '', discountPerPair: {} })
   const [selectedSaleIds, setSelectedSaleIds] = useState([])
 
-  // ===== NEW: Production / Raw Materials / BOM states =====
+  // ===== NEW: Production / Raw Materials states =====
   const [rawMaterials, setRawMaterials] = useState([])
   const [productionRecords, setProductionRecords] = useState([])
-  const [bomEntries, setBomEntries] = useState([])
 
   const [newRawMaterial, setNewRawMaterial] = useState({ name: '', unit: 'kg', unitCost: '', stockQty: '', notes: '' })
   const [newProduction, setNewProduction] = useState({
@@ -225,14 +223,11 @@ export default function App() {
     pairs: '',
     notes: ''
   })
-  const [newBom, setNewBom] = useState({ articleNumber: '', rawMaterialId: '', qtyPerDozen: '' })
 
   const [editingRawMaterialId, setEditingRawMaterialId] = useState(null)
   const [editRawMaterialInputs, setEditRawMaterialInputs] = useState({})
   const [editingProductionId, setEditingProductionId] = useState(null)
   const [editProductionInputs, setEditProductionInputs] = useState({})
-  const [editingBomId, setEditingBomId] = useState(null)
-  const [editBomInputs, setEditBomInputs] = useState({})
 
   const [stockReportSearch, setStockReportSearch] = useState('')
 
@@ -273,12 +268,11 @@ export default function App() {
         axios.get(`${API_BASE_URL}/api/sales`, { headers }),
         axios.get(`${API_BASE_URL}/api/payments`, { headers })
       ])
-      const [workersRes, wagePaymentsRes, rawRes, prodRes2, bomRes] = await Promise.all([
+      const [workersRes, wagePaymentsRes, rawRes, prodRes2] = await Promise.all([
         axios.get(`${API_BASE_URL}/api/wages/workers`, { headers }),
         axios.get(`${API_BASE_URL}/api/wages/payments`, { headers }),
         axios.get(`${API_BASE_URL}/api/rawmaterials`, { headers }),
-        axios.get(`${API_BASE_URL}/api/production`, { headers }),
-        axios.get(`${API_BASE_URL}/api/bom`, { headers })
+        axios.get(`${API_BASE_URL}/api/production`, { headers })
       ])
       await axios.get(`${API_BASE_URL}/api/articles`, { headers })
       setInventory(prodRes.data || [])
@@ -311,7 +305,6 @@ export default function App() {
         ...p,
         date: p.date ? String(p.date).split('T')[0] : ''
       })))
-      setBomEntries(bomRes.data || [])
     } catch (error) {
       console.error("Failed to fetch data or unauthorized:", error)
       if (error.response?.status === 401) {
@@ -399,8 +392,7 @@ export default function App() {
   const totalPaymentsReceived = payments.reduce((acc, p) => acc + Number(p.amount || 0), 0)
 
   const totalWages = wagePayments.reduce((acc, w) => acc + Number(w.amount || 0), 0)
-  const totalTours = tours.reduce((acc, t) => acc + Number(t.cost || 0), 0)
-  const netProfit = totalSalesRevenue - totalExpenses - totalWages - totalTours
+  const netProfit = totalSalesRevenue - totalExpenses - totalWages
 
   // ===== NEW: Production & Raw Material computations =====
   const totalRawMaterialStockValue = useMemo(() => {
@@ -415,54 +407,6 @@ export default function App() {
   }, [productionRecords])
 
   const totalPairsProduced = totalDozensProduced * 12
-
-  const costPerDozenByArticle = useMemo(() => {
-    const map = {}
-    bomEntries.forEach(entry => {
-      const material = rawMaterials.find(m => String(m.id) === String(entry.rawMaterialId))
-      if (!material) return
-      const cost = numberOrZero(entry.qtyPerDozen) * numberOrZero(material.unitCost)
-      map[entry.articleNumber] = (map[entry.articleNumber] || 0) + cost
-    })
-    return map
-  }, [bomEntries, rawMaterials])
-
-  const totalProductionRawMaterialCost = useMemo(() => {
-    return productionRecords.reduce((sum, p) => {
-      const dozenCost = costPerDozenByArticle[p.articleNumber] || 0
-      const dozens = numberOrZero(p.dozens) + (numberOrZero(p.pairs) / 12)
-      return sum + (dozens * dozenCost)
-    }, 0)
-  }, [productionRecords, costPerDozenByArticle])
-
-  const bomSummaryByArticle = useMemo(() => {
-    const map = {}
-    bomEntries.forEach(entry => {
-      const material = rawMaterials.find(m => String(m.id) === String(entry.rawMaterialId))
-      const lineCost = numberOrZero(entry.qtyPerDozen) * numberOrZero(material?.unitCost)
-      if (!map[entry.articleNumber]) {
-        map[entry.articleNumber] = {
-          articleNumber: entry.articleNumber,
-          totalDozenCost: 0,
-          entries: 0,
-          materials: []
-        }
-      }
-      map[entry.articleNumber].totalDozenCost += lineCost
-      map[entry.articleNumber].entries += 1
-      map[entry.articleNumber].materials.push({
-        id: entry.id,
-        rawMaterial: material?.name || 'Unknown material',
-        qtyPerDozen: numberOrZero(entry.qtyPerDozen),
-        unitCost: numberOrZero(material?.unitCost),
-        lineCost
-      })
-    })
-    return Object.values(map).sort((a, b) => b.totalDozenCost - a.totalDozenCost)
-  }, [bomEntries, rawMaterials])
-
-  const averageCostPerDozen = totalDozensProduced > 0 ? totalProductionRawMaterialCost / totalDozensProduced : 0
-  const averageCostPerPair = averageCostPerDozen / 12
 
   const inventoryByArticle = useMemo(() => {
     return inventoryWithTrueStock.reduce((groups, item) => {
@@ -706,12 +650,6 @@ export default function App() {
     }
   }
 
-  const handleAddTour = (e) => {
-    e.preventDefault()
-    if (!newTour.rep || !newTour.cost) return
-    setTours([...tours, { id: Date.now(), ...newTour, cost: Number(newTour.cost), ordersValue: Number(newTour.ordersValue || 0) }])
-    setNewTour({ rep: '', region: '', cost: '', ordersValue: '', date: new Date().toISOString().split('T')[0] })
-  }
 
   const handleCartItemChange = (index, field, value) => {
     const updated = [...cartItems]
@@ -1648,11 +1586,10 @@ export default function App() {
   }
 
   const handleDeleteRawMaterial = async (id) => {
-    if (!window.confirm('Delete this raw material? Any BOM entries using it will also be removed.')) return
+    if (!window.confirm('Delete this raw material?')) return
     try {
       await axios.delete(`${API_BASE_URL}/api/rawmaterials/${id}`, { headers: authHeaders() })
       setRawMaterials(prev => prev.filter(m => m.id !== id))
-      setBomEntries(prev => prev.filter(b => String(b.rawMaterialId) !== String(id)))
     } catch (err) {
       console.error('Delete raw material failed:', err)
       alert('Failed to delete raw material.')
@@ -1724,80 +1661,6 @@ export default function App() {
     }
   }
 
-  // ===== NEW: BOM CRUD handlers (backend-backed) =====
-  const handleAddBom = async (e) => {
-    e.preventDefault()
-    if (!newBom.articleNumber || !newBom.rawMaterialId || newBom.qtyPerDozen === '') return
-
-    const qtyPerDozen = Number(newBom.qtyPerDozen)
-    if (!Number.isFinite(qtyPerDozen) || qtyPerDozen <= 0) {
-      alert('Qty per dozen must be greater than zero.')
-      return
-    }
-
-    const duplicate = bomEntries.some(entry =>
-      String(entry.articleNumber).trim().toLowerCase() === String(newBom.articleNumber).trim().toLowerCase() &&
-      Number(entry.rawMaterialId) === Number(newBom.rawMaterialId)
-    )
-    if (duplicate) {
-      alert('This raw material is already mapped to this article. Edit the quantity instead of adding a duplicate.')
-      return
-    }
-
-    try {
-      const res = await axios.post(`${API_BASE_URL}/api/bom`, {
-        articleNumber: newBom.articleNumber.trim(),
-        rawMaterialId: Number(newBom.rawMaterialId),
-        qtyPerDozen: qtyPerDozen
-      }, { headers: authHeaders() })
-      setBomEntries(prev => [res.data, ...prev])
-      setNewBom({ articleNumber: '', rawMaterialId: '', qtyPerDozen: '' })
-    } catch (err) {
-      console.error('Add BOM failed:', err)
-      alert(err.response?.data?.message || err.response?.data || 'Failed to save BOM entry.')
-    }
-  }
-
-  const handleUpdateBom = async (id) => {
-    const inputs = editBomInputs[id] || {}
-    const existing = bomEntries.find(b => b.id === id)
-    if (!existing) return
-    const payload = {
-      articleNumber: inputs.articleNumber !== undefined ? inputs.articleNumber : existing.articleNumber,
-      rawMaterialId: inputs.rawMaterialId !== undefined ? Number(inputs.rawMaterialId) : existing.rawMaterialId,
-      qtyPerDozen: inputs.qtyPerDozen !== undefined ? Number(inputs.qtyPerDozen) || 0 : existing.qtyPerDozen
-    }
-
-    if (!payload.articleNumber?.trim()) {
-      alert('Article number is required.')
-      return
-    }
-    if (!Number.isFinite(payload.qtyPerDozen) || payload.qtyPerDozen <= 0) {
-      alert('Qty per dozen must be greater than zero.')
-      return
-    }
-
-    try {
-      const res = await axios.put(`${API_BASE_URL}/api/bom/${id}`, payload, { headers: authHeaders() })
-      setBomEntries(prev => prev.map(b => b.id === id ? res.data : b))
-      setEditingBomId(null)
-      setEditBomInputs(prev => ({ ...prev, [id]: {} }))
-    } catch (err) {
-      console.error('Update BOM failed:', err)
-      alert(err.response?.data?.message || err.response?.data || 'Failed to update BOM entry.')
-    }
-  }
-
-  const handleDeleteBom = async (id) => {
-    if (!window.confirm('Remove this BOM entry?')) return
-    try {
-      await axios.delete(`${API_BASE_URL}/api/bom/${id}`, { headers: authHeaders() })
-      setBomEntries(prev => prev.filter(b => b.id !== id))
-    } catch (err) {
-      console.error('Delete BOM failed:', err)
-      alert('Failed to delete BOM entry.')
-    }
-  }
 
   const tabs = [
     { id: 'dashboard', label: 'Dashboard' },
@@ -1809,14 +1672,10 @@ export default function App() {
     { id: 'production', label: '🏭 Production' },
     { id: 'rawmaterials', label: '🧱 Raw Materials' },
     { id: 'entry', label: '📥 Material Entry' },
-    { id: 'costing', label: '💰 Costing / BOM' },
     { id: 'reports', label: '📊 گاہک کی رپورٹ (Reports)' },
     { id: 'expenses', label: 'Expenses' },
     { id: 'wages', label: 'Daily Wages' },
-    { id: 'tours', label: 'Tours' },
-    { id: 'pnl', label: 'P&L' },
-    { id: 'balancesheet', label: 'Balance Sheet' },
-    { id: 'pwa', label: 'Mobile' }
+    { id: 'balancesheet', label: 'Balance Sheet' }
   ]
 
   const filteredStockInventory = useMemo(() => {
@@ -2931,18 +2790,6 @@ export default function App() {
                 <p style={{ margin: '4px 0 0 0', fontSize: '22px', fontWeight: '800', color: '#2563eb' }}>{totalDozensProduced.toFixed(2)} Dozens</p>
                 <p style={{ margin: '2px 0 0 0', fontSize: '12px', color: '#64748b' }}>({totalPairsProduced.toLocaleString()} pairs)</p>
               </div>
-              <div style={{ backgroundColor: '#faf5f8', border: '1px solid #f0d8ec', padding: '16px 18px', borderRadius: '8px' }}>
-                <p style={{ margin: 0, fontSize: '11px', fontWeight: '700', color: '#714B67', letterSpacing: '0.5px' }}>AVG RAW MATERIAL COST / DOZEN</p>
-                <p style={{ margin: '4px 0 0 0', fontSize: '22px', fontWeight: '800', color: '#714B67' }}>Rs. {averageCostPerDozen.toFixed(2)}</p>
-              </div>
-              <div style={{ backgroundColor: '#f0fdf4', border: '1px solid #bbf7d0', padding: '16px 18px', borderRadius: '8px' }}>
-                <p style={{ margin: 0, fontSize: '11px', fontWeight: '700', color: '#15803d', letterSpacing: '0.5px' }}>AVG RAW MATERIAL COST / PAIR</p>
-                <p style={{ margin: '4px 0 0 0', fontSize: '22px', fontWeight: '800', color: '#16a34a' }}>Rs. {averageCostPerPair.toFixed(2)}</p>
-              </div>
-              <div style={{ backgroundColor: '#fef2f2', border: '1px solid #fecaca', padding: '16px 18px', borderRadius: '8px' }}>
-                <p style={{ margin: 0, fontSize: '11px', fontWeight: '700', color: '#991b1b', letterSpacing: '0.5px' }}>TOTAL RAW MATERIALS CONSUMED</p>
-                <p style={{ margin: '4px 0 0 0', fontSize: '22px', fontWeight: '800', color: '#dc2626' }}>Rs. {totalProductionRawMaterialCost.toLocaleString()}</p>
-              </div>
             </div>
 
             <form onSubmit={handleAddProduction} style={{ backgroundColor: '#ffffff', padding: '20px', borderRadius: '10px', border: '1px solid #e2e8f0', boxShadow: '0 1px 3px rgba(0,0,0,0.05)', display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '12px' }}>
@@ -2973,22 +2820,17 @@ export default function App() {
                     <th style={{ padding: '14px' }}>Article</th>
                     <th style={{ padding: '14px' }}>Dozens</th>
                     <th style={{ padding: '14px' }}>Pairs</th>
-                    <th style={{ padding: '14px' }}>RM Cost / Dozen</th>
-                    <th style={{ padding: '14px' }}>RM Cost Total</th>
                     <th style={{ padding: '14px' }}>Notes</th>
                     <th style={{ padding: '14px', textAlign: 'center' }}>Actions</th>
                   </tr>
                 </thead>
                 <tbody>
                   {productionRecords.length === 0 ? (
-                    <tr><td colSpan="8" style={{ padding: '20px', textAlign: 'center', color: '#94a3b8' }}>No production entries yet.</td></tr>
+                    <tr><td colSpan="6" style={{ padding: '20px', textAlign: 'center', color: '#94a3b8' }}>No production entries yet.</td></tr>
                   ) : (
                     productionRecords.map(p => {
                       const isEditing = editingProductionId === p.id
                       const inputs = editProductionInputs[p.id] || {}
-                      const effDozens = numberOrZero(p.dozens) + (numberOrZero(p.pairs) / 12)
-                      const dozenCost = costPerDozenByArticle[p.articleNumber] || 0
-                      const lineCost = dozenCost * effDozens
                       return (
                         <tr key={p.id} style={{ borderBottom: '1px solid #f1f5f9', fontSize: '14px' }}>
                           <td style={{ padding: '14px', color: '#64748b' }}>
@@ -3011,8 +2853,6 @@ export default function App() {
                               <input type="number" min="0" step="1" value={inputs.pairs ?? p.pairs} onChange={e => setEditProductionInputs(prev => ({ ...prev, [p.id]: { ...(prev[p.id] || {}), pairs: e.target.value } }))} style={{ padding: '4px 6px', fontSize: '12px', borderRadius: '4px', border: '1px solid #cbd5e1', width: '70px' }} />
                             ) : numberOrZero(p.pairs)}
                           </td>
-                          <td style={{ padding: '14px', color: '#714B67', fontWeight: '600' }}>Rs. {dozenCost.toFixed(2)}</td>
-                          <td style={{ padding: '14px', color: '#dc2626', fontWeight: '700' }}>Rs. {lineCost.toFixed(2)}</td>
                           <td style={{ padding: '14px', color: '#475569' }}>
                             {isEditing ? (
                               <input type="text" value={inputs.notes ?? p.notes} onChange={e => setEditProductionInputs(prev => ({ ...prev, [p.id]: { ...(prev[p.id] || {}), notes: e.target.value } }))} style={{ padding: '4px 6px', fontSize: '12px', borderRadius: '4px', border: '1px solid #cbd5e1', width: '140px' }} />
@@ -3040,12 +2880,14 @@ export default function App() {
                 </tbody>
               </table>
             </div>
+
+            <MaterialUsagePanel token={token} production={productionRecords} />
           </div>
         )}
 
-        {/* ============================== Raw Materials tab ============================== */}
         {activeTab === 'entry' && <EntryModule token={token} username={username} />}
 
+        {/* ============================== Raw Materials tab ============================== */}
         {activeTab === 'rawmaterials' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
             <h2 style={{ margin: 0, fontSize: '18px', fontWeight: '700', color: '#1e293b' }}>🧱 Raw Material Inventory</h2>
@@ -3130,189 +2972,6 @@ export default function App() {
                   )}
                 </tbody>
               </table>
-            </div>
-          </div>
-        )}
-
-        {/* ============================== Costing / BOM tab ============================== */}
-        {activeTab === 'costing' && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-            <h2 style={{ margin: 0, fontSize: '18px', fontWeight: '700', color: '#1e293b' }}>💰 Costing — BOM & Raw Material Cost</h2>
-
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '12px' }}>
-              <div style={{ backgroundColor: '#f0fdf4', border: '1px solid #bbf7d0', padding: '16px 18px', borderRadius: '8px' }}>
-                <p style={{ margin: 0, fontSize: '11px', fontWeight: '700', color: '#15803d', letterSpacing: '0.5px' }}>AVG COST / DOZEN (FACTORY)</p>
-                <p style={{ margin: '4px 0 0 0', fontSize: '22px', fontWeight: '800', color: '#16a34a' }}>Rs. {averageCostPerDozen.toFixed(2)}</p>
-              </div>
-              <div style={{ backgroundColor: '#eff6ff', border: '1px solid #bfdbfe', padding: '16px 18px', borderRadius: '8px' }}>
-                <p style={{ margin: 0, fontSize: '11px', fontWeight: '700', color: '#1d4ed8', letterSpacing: '0.5px' }}>AVG COST / PAIR (FACTORY)</p>
-                <p style={{ margin: '4px 0 0 0', fontSize: '22px', fontWeight: '800', color: '#2563eb' }}>Rs. {averageCostPerPair.toFixed(2)}</p>
-              </div>
-              <div style={{ backgroundColor: '#fff7ed', border: '1px solid #fed7aa', padding: '16px 18px', borderRadius: '8px' }}>
-                <p style={{ margin: 0, fontSize: '11px', fontWeight: '700', color: '#c2410c', letterSpacing: '0.5px' }}>TOTAL BOM ITEMS</p>
-                <p style={{ margin: '4px 0 0 0', fontSize: '22px', fontWeight: '800', color: '#c2410c' }}>{bomEntries.length}</p>
-              </div>
-            </div>
-
-            <div style={{ backgroundColor: '#ffffff', padding: '20px', borderRadius: '10px', border: '1px solid #e2e8f0', boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}>
-              <h3 style={{ margin: '0 0 12px 0', fontSize: '15px', color: '#475569' }}>BOM = Raw material usage per 1 dozen of one article</h3>
-              <p style={{ margin: '0 0 18px 0', color: '#64748b', fontSize: '13px' }}>Add one row per raw material for each article. Example: Article A-100 uses 2.5 kg leather + 0.8 kg sole foam. The system multiplies each row by the actual dozen quantity produced.</p>
-
-              <form onSubmit={handleAddBom} style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: '12px', marginBottom: '18px' }}>
-                <input
-                  type="text"
-                  list="bom-articles"
-                  placeholder="Article Number"
-                  value={newBom.articleNumber}
-                  onChange={e => setNewBom({ ...newBom, articleNumber: e.target.value })}
-                  required
-                  style={{ padding: '10px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '14px' }}
-                />
-                <datalist id="bom-articles">
-                  {Object.keys(inventoryByArticle).map(a => <option key={a} value={a} />)}
-                </datalist>
-
-                <select
-                  value={newBom.rawMaterialId}
-                  onChange={e => setNewBom({ ...newBom, rawMaterialId: e.target.value })}
-                  required
-                  style={{ padding: '10px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '14px', backgroundColor: '#fff' }}
-                >
-                  <option value="">-- Select Raw Material --</option>
-                  {rawMaterials.map(m => (
-                    <option key={m.id} value={m.id}>{m.name} (Rs. {numberOrZero(m.unitCost)}/{m.unit})</option>
-                  ))}
-                </select>
-
-                <input
-                  type="number"
-                  min="0"
-                  step="0.0001"
-                  placeholder="Qty used per dozen"
-                  value={newBom.qtyPerDozen}
-                  onChange={e => setNewBom({ ...newBom, qtyPerDozen: e.target.value })}
-                  required
-                  style={{ padding: '10px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '14px' }}
-                />
-
-                <button type="submit" style={{ backgroundColor: '#714B67', color: '#ffffff', fontWeight: '700', border: 'none', borderRadius: '6px', padding: '10px', cursor: 'pointer', fontSize: '14px' }}>+ Add BOM Entry</button>
-              </form>
-
-              <div style={{ overflowX: 'auto' }}>
-                <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', minWidth: '750px' }}>
-                  <thead>
-                    <tr style={{ backgroundColor: '#f1f5f9', borderBottom: '1px solid #e2e8f0', fontSize: '12px', color: '#475569', textTransform: 'uppercase' }}>
-                      <th style={{ padding: '12px' }}>Article</th>
-                      <th style={{ padding: '12px' }}>Raw Material</th>
-                      <th style={{ padding: '12px' }}>Qty / Dozen</th>
-                      <th style={{ padding: '12px' }}>Unit Cost</th>
-                      <th style={{ padding: '12px' }}>Line Cost / Dozen</th>
-                      <th style={{ padding: '12px', textAlign: 'center' }}>Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {bomEntries.length === 0 ? (
-                      <tr><td colSpan="6" style={{ padding: '20px', textAlign: 'center', color: '#94a3b8' }}>No BOM entries yet. Add materials above to define cost per dozen.</td></tr>
-                    ) : (
-                      bomEntries.map(b => {
-                        const material = rawMaterials.find(m => String(m.id) === String(b.rawMaterialId))
-                        const isEditing = editingBomId === b.id
-                        const inputs = editBomInputs[b.id] || {}
-                        const lineCost = numberOrZero(b.qtyPerDozen) * numberOrZero(material?.unitCost)
-                        return (
-                          <tr key={b.id} style={{ borderBottom: '1px solid #f1f5f9', fontSize: '14px' }}>
-                            <td style={{ padding: '12px', fontWeight: '700', color: '#0f172a' }}>
-                              {isEditing ? (<input type="text" value={inputs.articleNumber ?? b.articleNumber} onChange={e => setEditBomInputs(prev => ({ ...prev, [b.id]: { ...(prev[b.id] || {}), articleNumber: e.target.value } }))} style={{ padding: '4px 6px', fontSize: '12px', borderRadius: '4px', border: '1px solid #cbd5e1', width: '120px' }} />) : b.articleNumber}
-                            </td>
-                            <td style={{ padding: '12px', color: '#475569' }}>
-                              {isEditing ? (
-                                <select value={inputs.rawMaterialId ?? b.rawMaterialId} onChange={e => setEditBomInputs(prev => ({ ...prev, [b.id]: { ...(prev[b.id] || {}), rawMaterialId: e.target.value } }))} style={{ padding: '4px 6px', fontSize: '12px', borderRadius: '4px', border: '1px solid #cbd5e1' }}>
-                                  {rawMaterials.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
-                                </select>
-                              ) : (material ? material.name : <em style={{ color: '#dc2626' }}>Deleted material</em>)}
-                            </td>
-                            <td style={{ padding: '12px', color: '#2563eb', fontWeight: '600' }}>
-                              {isEditing ? (<input type="number" step="0.0001" value={inputs.qtyPerDozen ?? b.qtyPerDozen} onChange={e => setEditBomInputs(prev => ({ ...prev, [b.id]: { ...(prev[b.id] || {}), qtyPerDozen: e.target.value } }))} style={{ padding: '4px 6px', fontSize: '12px', borderRadius: '4px', border: '1px solid #cbd5e1', width: '90px' }} />) : `${numberOrZero(b.qtyPerDozen)} ${material?.unit || ''}`}
-                            </td>
-                            <td style={{ padding: '12px', color: '#475569' }}>Rs. {numberOrZero(material?.unitCost).toLocaleString()}</td>
-                            <td style={{ padding: '12px', color: '#dc2626', fontWeight: '700' }}>Rs. {lineCost.toFixed(2)}</td>
-                            <td style={{ padding: '12px', textAlign: 'center' }}>
-                              <div style={{ display: 'flex', gap: '6px', justifyContent: 'center' }}>
-                                {isEditing ? (
-                                  <>
-                                    <button onClick={() => handleUpdateBom(b.id)} style={{ backgroundColor: '#16a34a', color: '#fff', border: 'none', padding: '6px 10px', borderRadius: '4px', cursor: 'pointer', fontWeight: '600', fontSize: '12px' }}>Save</button>
-                                    <button onClick={() => { setEditingBomId(null); setEditBomInputs(prev => ({ ...prev, [b.id]: {} })) }} style={{ backgroundColor: '#64748b', color: '#fff', border: 'none', padding: '6px 10px', borderRadius: '4px', cursor: 'pointer', fontWeight: '600', fontSize: '12px' }}>Cancel</button>
-                                  </>
-                                ) : (
-                                  <>
-                                    <button onClick={() => { setEditingBomId(b.id); setEditBomInputs(prev => ({ ...prev, [b.id]: {} })) }} style={{ backgroundColor: '#2563eb', color: '#fff', border: 'none', padding: '6px 10px', borderRadius: '4px', cursor: 'pointer', fontWeight: '600', fontSize: '12px' }}>Edit</button>
-                                    <button onClick={() => handleDeleteBom(b.id)} style={{ backgroundColor: '#dc2626', color: '#fff', border: 'none', padding: '6px 10px', borderRadius: '4px', cursor: 'pointer', fontWeight: '600', fontSize: '12px' }}>Delete</button>
-                                  </>
-                                )}
-                              </div>
-                            </td>
-                          </tr>
-                        )
-                      })
-                    )}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-
-            <div style={{ backgroundColor: '#ffffff', padding: '20px', borderRadius: '10px', border: '1px solid #e2e8f0', boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}>
-              <h3 style={{ margin: '0 0 14px 0', fontSize: '15px', color: '#475569' }}>Article-wise BOM Summary</h3>
-              {bomSummaryByArticle.length === 0 ? (
-                <p style={{ color: '#94a3b8', padding: '12px 0' }}>Add BOM entries to see per-article cost per dozen and material mix.</p>
-              ) : (
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: '12px' }}>
-                  {bomSummaryByArticle.map(summary => (
-                    <div key={summary.articleNumber} style={{ border: '1px solid #e2e8f0', borderRadius: '10px', overflow: 'hidden', backgroundColor: '#f8fafc' }}>
-                      <div style={{ backgroundColor: '#eef2ff', padding: '12px 14px', borderBottom: '1px solid #e2e8f0' }}>
-                        <strong style={{ color: '#312e81' }}>{summary.articleNumber}</strong>
-                      </div>
-                      <div style={{ padding: '12px 14px' }}>
-                        <div style={{ fontSize: '13px', color: '#475569', marginBottom: '8px' }}><strong>Total material cost / dozen:</strong> Rs. {summary.totalDozenCost.toFixed(2)}</div>
-                        <ul style={{ margin: 0, paddingLeft: '18px', color: '#334155', fontSize: '12px' }}>
-                          {summary.materials.map(item => (
-                            <li key={item.id} style={{ marginBottom: '6px' }}>
-                              {item.rawMaterial} — {item.qtyPerDozen} x Rs. {item.unitCost.toFixed(2)} = Rs. {item.lineCost.toFixed(2)}
-                            </li>
-                          ))}
-                        </ul>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-
-            <div style={{ backgroundColor: '#ffffff', padding: '20px', borderRadius: '10px', border: '1px solid #e2e8f0', boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}>
-              <h3 style={{ margin: '0 0 14px 0', fontSize: '15px', color: '#475569' }}>Computed Raw Material Cost per Dozen by Article</h3>
-              {Object.keys(costPerDozenByArticle).length === 0 ? (
-                <p style={{ color: '#94a3b8', padding: '12px 0' }}>Add BOM entries to see per-article cost per dozen.</p>
-              ) : (
-                <div style={{ overflowX: 'auto' }}>
-                  <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', minWidth: '450px' }}>
-                    <thead>
-                      <tr style={{ backgroundColor: '#f1f5f9', fontSize: '12px', color: '#475569', textTransform: 'uppercase' }}>
-                        <th style={{ padding: '12px' }}>Article</th>
-                        <th style={{ padding: '12px' }}>RM Cost / Dozen</th>
-                        <th style={{ padding: '12px' }}>RM Cost / Pair</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {Object.entries(costPerDozenByArticle).map(([article, cost]) => (
-                        <tr key={article} style={{ borderBottom: '1px solid #f1f5f9', fontSize: '14px' }}>
-                          <td style={{ padding: '12px', fontWeight: '700', color: '#0f172a' }}>{article}</td>
-                          <td style={{ padding: '12px', color: '#714B67', fontWeight: '700' }}>Rs. {cost.toFixed(2)}</td>
-                          <td style={{ padding: '12px', color: '#2563eb', fontWeight: '600' }}>Rs. {(cost / 12).toFixed(2)}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
             </div>
           </div>
         )}
@@ -3459,71 +3118,6 @@ export default function App() {
           </div>
         )}
 
-        {activeTab === 'tours' && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-            <h2 style={{ margin: 0, fontSize: '18px', fontWeight: '700', color: '#1e293b' }}>Sales Rep Tour Accounting</h2>
-            <form onSubmit={handleAddTour} style={{ backgroundColor: '#ffffff', padding: '20px', borderRadius: '10px', border: '1px solid #e2e8f0', boxShadow: '0 1px 3px rgba(0,0,0,0.05)', display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '12px' }}>
-              <input type="text" placeholder="Representative" value={newTour.rep} onChange={e=>setNewTour({...newTour, rep: e.target.value})} style={{ padding: '10px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '14px', width: '100%', boxSizing: 'border-box' }} required />
-              <input type="text" placeholder="Region" value={newTour.region} onChange={e=>setNewTour({...newTour, region: e.target.value})} style={{ padding: '10px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '14px', width: '100%', boxSizing: 'border-box' }} />
-              <input type="number" placeholder="Tour Cost" value={newTour.cost} onChange={e=>setNewTour({...newTour, cost: e.target.value})} style={{ padding: '10px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '14px', width: '100%', boxSizing: 'border-box' }} required />
-              <input type="number" placeholder="Orders Booked" value={newTour.ordersValue} onChange={e=>setNewTour({...newTour, ordersValue: e.target.value})} style={{ padding: '10px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '14px', width: '100%', boxSizing: 'border-box' }} />
-              <button type="submit" style={{ backgroundColor: '#714B67', color: '#ffffff', fontWeight: '700', border: 'none', borderRadius: '6px', padding: '10px', cursor: 'pointer', fontSize: '14px' }}>+ Log Tour</button>
-            </form>
-            <div style={{ backgroundColor: '#ffffff', borderRadius: '10px', border: '1px solid #e2e8f0', boxShadow: '0 1px 3px rgba(0,0,0,0.05)', overflowX: 'auto' }}>
-              <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', minWidth: '500px' }}>
-                <thead>
-                  <tr style={{ backgroundColor: '#f1f5f9', borderBottom: '1px solid #e2e8f0', fontSize: '12px', color: '#475569', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-                    <th style={{ padding: '14px' }}>Representative</th>
-                    <th style={{ padding: '14px' }}>Region</th>
-                    <th style={{ padding: '14px' }}>Cost</th>
-                    <th style={{ padding: '14px' }}>Orders</th>
-                    <th style={{ padding: '14px' }}>ROI</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {tours.map(t => (
-                    <tr key={t.id} style={{ borderBottom: '1px solid #f1f5f9', fontSize: '14px' }}>
-                      <td style={{ padding: '14px', fontWeight: '700', color: '#0f172a' }}>{t.rep}</td>
-                      <td style={{ padding: '14px', color: '#475569' }}>{t.region}</td>
-                      <td style={{ padding: '14px', color: '#dc2626', fontWeight: '600' }}>Rs. {t.cost.toLocaleString()}</td>
-                      <td style={{ padding: '14px', color: '#16a34a', fontWeight: '600' }}>Rs. {t.ordersValue.toLocaleString()}</td>
-                      <td style={{ padding: '14px', color: '#2563eb', fontWeight: '700' }}>{((t.ordersValue / (t.cost || 1))).toFixed(1)}x</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        )}
-
-        {activeTab === 'pnl' && (
-          <div style={{ maxWidth: '600px', margin: '30px auto', backgroundColor: '#ffffff', padding: '30px', borderRadius: '12px', border: '1px solid #e2e8f0', boxShadow: '0 4px 6px rgba(0,0,0,0.05)' }}>
-            <h2 style={{ textAlign: 'center', fontSize: '20px', fontWeight: '800', marginBottom: '24px', color: '#1e293b' }}>Profit & Loss Statement</h2>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '18px', fontSize: '15px' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', paddingBottom: '14px', borderBottom: '1px solid #f1f5f9' }}>
-                <span style={{ color: '#475569', fontWeight: '600' }}>Total Sales Revenue</span>
-                <span style={{ fontWeight: '800', color: '#16a34a' }}>Rs. {totalSalesRevenue.toLocaleString()}</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', paddingBottom: '14px', borderBottom: '1px solid #f1f5f9' }}>
-                <span style={{ color: '#475569', fontWeight: '600' }}>Total Factory Expenses</span>
-                <span style={{ fontWeight: '800', color: '#dc2626' }}>- Rs. {totalExpenses.toLocaleString()}</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', paddingBottom: '14px', borderBottom: '1px solid #f1f5f9' }}>
-                <span style={{ color: '#475569', fontWeight: '600' }}>Total Wages Paid</span>
-                <span style={{ fontWeight: '800', color: '#dc2626' }}>- Rs. {totalWages.toLocaleString()}</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', paddingBottom: '14px', borderBottom: '1px solid #f1f5f9' }}>
-                <span style={{ color: '#475569', fontWeight: '600' }}>Total Tour Cost</span>
-                <span style={{ fontWeight: '800', color: '#dc2626' }}>- Rs. {totalTours.toLocaleString()}</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', padding: '18px', backgroundColor: '#f8fafc', borderRadius: '8px', fontWeight: '800', fontSize: '18px', border: '1px solid #e2e8f0' }}>
-                <span style={{ color: '#1e293b' }}>Net Profit / (Loss)</span>
-                <span style={{ color: netProfit >= 0 ? '#16a34a' : '#dc2626' }}>Rs. {netProfit.toLocaleString()}</span>
-              </div>
-            </div>
-          </div>
-        )}
-
         {activeTab === 'balancesheet' && (
           <div style={{ maxWidth: '750px', margin: '30px auto', backgroundColor: '#ffffff', padding: '30px', borderRadius: '12px', border: '1px solid #e2e8f0', boxShadow: '0 4px 6px rgba(0,0,0,0.05)' }}>
             <h2 style={{ textAlign: 'center', fontSize: '20px', fontWeight: '800', marginBottom: '24px', color: '#1e293b' }}>Factory Balance Sheet</h2>
@@ -3561,10 +3155,6 @@ export default function App() {
                   <span style={{ color: '#64748b', fontWeight: '600' }}>Total Wages Paid</span>
                   <span style={{ fontWeight: '700', color: '#dc2626' }}>Rs. {totalWages.toLocaleString()}</span>
                 </div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '14px', marginBottom: '10px' }}>
-                  <span style={{ color: '#64748b', fontWeight: '600' }}>Total Tour Cost</span>
-                  <span style={{ fontWeight: '700', color: '#dc2626' }}>Rs. {totalTours.toLocaleString()}</span>
-                </div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '14px', borderTop: '1px solid #cbd5e1', paddingTop: '10px' }}>
                   <span style={{ color: '#1e293b', fontWeight: '700' }}>Net Profit</span>
                   <span style={{ fontWeight: '800', color: netProfit >= 0 ? '#16a34a' : '#dc2626' }}>Rs. {netProfit.toLocaleString()}</span>
@@ -3574,14 +3164,6 @@ export default function App() {
           </div>
         )}
 
-        {activeTab === 'pwa' && (
-          <div style={{ maxWidth: '550px', margin: '40px auto', backgroundColor: '#ffffff', padding: '40px', borderRadius: '12px', border: '1px solid #e2e8f0', boxShadow: '0 4px 6px rgba(0,0,0,0.05)', textAlign: 'center' }}>
-            <h2 style={{ fontSize: '20px', fontWeight: '800', marginBottom: '12px', color: '#1e293b' }}>Mobile-Accessible PWA Ready</h2>
-            <p style={{ fontSize: '14px', color: '#64748b', lineHeight: '1.6', margin: 0 }}>
-              Access your local network URL on your smartphone browser over Wi-Fi to test your responsive enterprise app on the go.
-            </p>
-          </div>
-        )}
       </main>
     </div>
   )

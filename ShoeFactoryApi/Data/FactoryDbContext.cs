@@ -23,6 +23,7 @@ namespace ShoeFactoryApi.Data
         public DbSet<ProductionRecord> ProductionRecords => Set<ProductionRecord>();
         public DbSet<BomEntry> BomEntries => Set<BomEntry>();
         public DbSet<MaterialEntry> MaterialEntries => Set<MaterialEntry>();
+        public DbSet<MaterialCount> MaterialCounts => Set<MaterialCount>();
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
@@ -108,6 +109,10 @@ namespace ShoeFactoryApi.Data
             modelBuilder.Entity<MaterialEntry>().Property(e => e.Amount).HasPrecision(18, 2);
             modelBuilder.Entity<MaterialEntry>().HasIndex(e => e.Date);
             modelBuilder.Entity<MaterialEntry>().HasIndex(e => e.Material);
+
+            // ===== Daily remaining-material counts: one per material per day =====
+            modelBuilder.Entity<MaterialCount>().Property(c => c.RemainingQty).HasPrecision(18, 4);
+            modelBuilder.Entity<MaterialCount>().HasIndex(c => new { c.Date, c.Material }).IsUnique();
         }
     }
 }

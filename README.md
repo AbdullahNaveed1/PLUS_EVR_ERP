@@ -17,6 +17,7 @@ npm run desktop
 ## Modules
 
 - **Material Entry** (goods received): see [src/entry/README.md](src/entry/README.md) for the data model, adding materials and swapping the storage layer.
+- **Material usage per dozen** (Production tab): each day enter how much of each material is left. Used = last count + received since (Material Entry) − remaining now, divided by all dozens produced in that period. Logic in [src/production/materialUsage.js](src/production/materialUsage.js); counts are stored in the `MaterialCounts` table (`/api/material-counts`).
 
 ## Web Development
 
