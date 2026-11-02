@@ -28,7 +28,7 @@ const timeOf = value => {
   return Number.isNaN(d.getTime()) ? '' : d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })
 }
 
-export default function CustomerHistory({ customer, ledger, sales, invoiceNumber, onBack, canDeletePayments, onDeletePayment }) {
+export default function CustomerHistory({ customer, ledger, sales, invoiceNumber, onBack, canDeletePayments, onDeletePayment, canEditBills, onEditBill }) {
   const [confirmPayment, setConfirmPayment] = useState(null)
   const [deleting, setDeleting] = useState(false)
   const [deleteError, setDeleteError] = useState('')
@@ -207,8 +207,17 @@ export default function CustomerHistory({ customer, ledger, sales, invoiceNumber
                     <tr className="em-row-bill">
                       <td data-label="Date">{formatDate(e.date)}</td>
                       <td data-label="Detail">
-                        <strong>🧾 Bill No: {e.billNo || '—'}</strong>
-                        <span className="em-hint"> · Invoice: {invoiceNumber(saleById.get(e.sortId) || {})} · {formatNumber(e.pairs)} pairs</span>
+                        <div className="em-detail-actions">
+                          <span>
+                            <strong>🧾 Bill No: {e.billNo || '—'}</strong>
+                            <span className="em-hint"> · Invoice: {invoiceNumber(saleById.get(e.sortId) || {})} · {formatNumber(e.pairs)} pairs</span>
+                          </span>
+                          {canEditBills && saleById.get(e.sortId) && (
+                            <button type="button" className="em-btn em-btn-ghost em-btn-sm" onClick={() => onEditBill(saleById.get(e.sortId))}>
+                              ✏️ Edit
+                            </button>
+                          )}
+                        </div>
                         <div className="em-hint">Transport: {e.transportCompany} · Builty: {e.builtyNo}</div>
                       </td>
                       <td data-label="Bill" className="em-num"><strong>{rs(e.debit)}</strong></td>

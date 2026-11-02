@@ -3,6 +3,7 @@ import axios from 'axios'
 import EntryModule from './entry/EntryModule'
 import MaterialUsagePanel from './production/MaterialUsagePanel'
 import CustomerHistory from './customers/CustomerHistory'
+import EditBillModal from './sales/EditBillModal'
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || ''
 
@@ -99,7 +100,7 @@ const normalizeSale = sale => {
 
     return {
       ...item,
-      productId: item.productId || item.itemNo || item.itemNumber || item.articleNo || parsed.productId || 'N/A',
+      productId: (item.productId !== 'N/A' && item.productId) || item.itemNo || item.itemNumber || item.articleNo || parsed.productId || 'N/A',
       model: item.model || parsed.model || item.description || 'Footwear Article',
       description: item.description || item.model || 'Footwear Article',
       size: item.size || parsed.size || 'N/A',
@@ -211,8 +212,7 @@ export default function App() {
     { productId: '', model: '', size: '', qty: '', unitType: 'dozens', price: '' }
   ])
 
-  const [editingSaleId, setEditingSaleId] = useState(null)
-  const [editSaleInputs, setEditSaleInputs] = useState({ transportCompany: '', builtyNo: '', billNo: '', discountPerPair: {} })
+  const [editingBill, setEditingBill] = useState(null)
   const [selectedSaleIds, setSelectedSaleIds] = useState([])
 
   // ===== NEW: Production / Raw Materials states =====
@@ -787,48 +787,17 @@ export default function App() {
     setCartItems([{ productId: '', model: '', size: '', qty: '', unitType: 'dozens', price: '' }])
   }
 
-  const handleUpdateSaleDetails = async (saleId) => {
-    const updatedSales = sales.map(s => {
-      if (s.id === saleId) {
-        const discountInputs = editSaleInputs.discountPerPair || {}
-        const lineItems = (s.lineItems || []).map((item, index) => {
-          const pairs = getPairCount(item)
-          const grossAmount = numberOrZero(item.grossAmount) || (pairs * numberOrZero(item.price))
-          const discountPerPair = Math.max(0, numberOrZero(discountInputs[index]))
-          const discountAmount = Math.min(grossAmount, pairs * discountPerPair)
-          return {
-            ...item,
-            grossAmount,
-            discountPerPair,
-            discountAmount,
-            netAmount: grossAmount - discountAmount
-          }
-        })
-        const rawTotal = lineItems.reduce((total, item) => total + numberOrZero(item.grossAmount), 0)
-        const discount = lineItems.reduce((total, item) => total + numberOrZero(item.discountAmount), 0)
-
-        return {
-          ...s,
-          lineItems,
-          rawTotal,
-          discount,
-          total: rawTotal - discount,
-          transportCompany: editSaleInputs.transportCompany || s.transportCompany || 'N/A',
-          builtyNo: editSaleInputs.builtyNo || s.builtyNo || 'N/A',
-          billNo: editSaleInputs.billNo?.trim() || s.billNo || ''
-        };
-      }
-      return s;
-    });
-    const updatedSale = updatedSales.find(s => s.id === saleId)
+  // Admin only (the API also enforces this). The server recalculates totals and moves stock by the difference.
+  const handleSaveBillEdit = async updatedSale => {
     try {
-      await axios.put(`${API_BASE_URL}/api/sales/${saleId}`, updatedSale, { headers: authHeaders() })
-      setSales(updatedSales.map(normalizeSale))
-      setEditingSaleId(null)
+      await axios.put(`${API_BASE_URL}/api/sales/${updatedSale.id}`, updatedSale, { headers: authHeaders() })
     } catch (err) {
-      console.error('Error updating bill:', err)
-      alert('Failed to update the bill details.')
+      const status = err.response?.status
+      const detail = err.response?.data?.message
+      throw new Error(status === 403 ? 'Only Admin users can edit bills.' : detail || `Failed to save the bill (HTTP ${status || 'network'}).`, { cause: err })
     }
+    await fetchAllData()
+    setEditingBill(null)
   }
 
   const handleDeleteSelectedBills = async () => {
@@ -2155,6 +2124,8 @@ export default function App() {
             onBack={() => setHistoryCustomerId(null)}
             canDeletePayments={role === 'Admin'}
             onDeletePayment={handleDeletePayment}
+            canEditBills={role === 'Admin'}
+            onEditBill={setEditingBill}
           />
         )}
 
@@ -2696,7 +2667,6 @@ export default function App() {
                 </thead>
                 <tbody>
                   {sales.map(s => {
-                    const isEditing = editingSaleId === s.id;
                     return (
                       <tr key={s.id} style={{ borderBottom: '1px solid #f1f5f9', fontSize: '14px' }}>
                         <td style={{ padding: '14px', textAlign: 'center' }}>
@@ -2709,63 +2679,16 @@ export default function App() {
                         </td>
                         <td style={{ padding: '14px', color: '#64748b' }}>{s.date}</td>
                         <td style={{ padding: '14px', color: '#714B67', fontWeight: '700' }}>
-                          {isEditing ? (
-                            <input
-                              type="text"
-                              placeholder="Bill No"
-                              defaultValue={s.billNo}
-                              onChange={e => setEditSaleInputs({...editSaleInputs, billNo: e.target.value})}
-                              style={{ padding: '4px 6px', fontSize: '12px', borderRadius: '4px', border: '1px solid #cbd5e1', width: '100px', marginBottom: '4px' }}
-                            />
-                          ) : (
-                            <div style={{ color: s.billNo ? '#0f172a' : '#94a3b8' }}>Bill No: {s.billNo || '—'}</div>
-                          )}
+                          <div style={{ color: s.billNo ? '#0f172a' : '#94a3b8' }}>Bill No: {s.billNo || '—'}</div>
                           <div style={{ fontSize: '12px' }}>{getInvoiceNumber(s)}</div>
                         </td>
                         <td style={{ padding: '14px', fontWeight: '700', color: '#0f172a' }}>{s.customer} ({s.customerId})</td>
                         <td style={{ padding: '14px', color: '#475569' }}>{s.region || 'Punjab'}</td>
                         <td style={{ padding: '14px' }}>
-                          {isEditing ? (
-                            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                              <input
-                                type="text"
-                                placeholder="Transport Company"
-                                defaultValue={s.transportCompany}
-                                onChange={e => setEditSaleInputs({...editSaleInputs, transportCompany: e.target.value})}
-                                style={{ padding: '4px 6px', fontSize: '12px', borderRadius: '4px', border: '1px solid #cbd5e1' }}
-                              />
-                              <input
-                                type="text"
-                                placeholder="Builty No"
-                                defaultValue={s.builtyNo}
-                                onChange={e => setEditSaleInputs({...editSaleInputs, builtyNo: e.target.value})}
-                                style={{ padding: '4px 6px', fontSize: '12px', borderRadius: '4px', border: '1px solid #cbd5e1' }}
-                              />
-                              <strong style={{ fontSize: '12px', marginTop: '6px' }}>Apply Discount Later</strong>
-                              {(s.lineItems || []).map((item, index) => (
-                                <label key={index} style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '12px' }}>
-                                  {item.model || `Item ${index + 1}`} (Size: {item.size || 'N/A'}):
-                                  <input
-                                    type="number"
-                                    min="0"
-                                    step="0.01"
-                                    placeholder="Rs./pair"
-                                    value={editSaleInputs.discountPerPair?.[index] ?? 0}
-                                    onChange={e => setEditSaleInputs({
-                                      ...editSaleInputs,
-                                      discountPerPair: { ...editSaleInputs.discountPerPair, [index]: e.target.value }
-                                    })}
-                                    style={{ width: '75px', padding: '4px 6px', fontSize: '12px', borderRadius: '4px', border: '1px solid #cbd5e1' }}
-                                  />
-                                </label>
-                              ))}
-                            </div>
-                          ) : (
-                            <span style={{ fontSize: '13px', color: '#334155' }}>
-                              🚚 <strong>{s.transportCompany || 'N/A'}</strong><br/>
-                              📦 Builty: {s.builtyNo || 'N/A'}
-                            </span>
-                          )}
+                          <span style={{ fontSize: '13px', color: '#334155' }}>
+                            🚚 <strong>{s.transportCompany || 'N/A'}</strong><br/>
+                            📦 Builty: {s.builtyNo || 'N/A'}
+                          </span>
                         </td>
                         <td style={{ padding: '14px', color: '#16a34a', fontWeight: '700' }}>
                           Rs. {(s.discount > 0 ? s.total : (s.rawTotal || s.total)).toLocaleString()}
@@ -2780,27 +2703,12 @@ export default function App() {
                               📄 View PDF Bill
                             </button>
 
-                            {isEditing ? (
+                            {role === 'Admin' && (
                               <button
-                                onClick={() => handleUpdateSaleDetails(s.id)}
-                                style={{ backgroundColor: '#16a34a', color: '#fff', border: 'none', padding: '6px 10px', borderRadius: '6px', cursor: 'pointer', fontWeight: '600', fontSize: '12px' }}
-                              >
-                                Save
-                              </button>
-                            ) : (
-                              <button
-                                onClick={() => {
-                                  setEditingSaleId(s.id);
-                                  setEditSaleInputs({
-                                    transportCompany: s.transportCompany || '',
-                                    builtyNo: s.builtyNo || '',
-                                    billNo: s.billNo || '',
-                                    discountPerPair: Object.fromEntries((s.lineItems || []).map((item, index) => [index, item.discountPerPair || 0]))
-                                  });
-                                }}
+                                onClick={() => setEditingBill(s)}
                                 style={{ backgroundColor: '#64748b', color: '#fff', border: 'none', padding: '6px 10px', borderRadius: '6px', cursor: 'pointer', fontWeight: '600', fontSize: '12px' }}
                               >
-                                Edit Bill Details
+                                ✏️ Edit Bill
                               </button>
                             )}
                             <button
@@ -3211,6 +3119,16 @@ export default function App() {
               </div>
             </div>
           </div>
+        )}
+
+        {editingBill && role === 'Admin' && (
+          <EditBillModal
+            key={editingBill.id}
+            sale={editingBill}
+            inventory={inventory}
+            onSave={handleSaveBillEdit}
+            onClose={() => setEditingBill(null)}
+          />
         )}
 
       </main>

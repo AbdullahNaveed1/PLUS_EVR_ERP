@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -44,15 +45,56 @@ namespace ShoeFactoryApi.Controllers
             return CreatedAtAction(nameof(GetSale), new { id = sale.Id }, ToResponse(sale));
         }
 
+        // Admin only. Finished-goods stock moves by the difference in pairs per product,
+        // saved together with the bill so the two never disagree.
+        [Authorize(Roles = "Admin")]
         [HttpPut("{id}")]
         public async Task<IActionResult> PutSale(int id, JsonElement payload)
         {
             var sale = await _context.Sales.FindAsync(id);
             if (sale == null) return NotFound();
+
+            var pairsBefore = PairsByProduct(sale.LineItemsJson);
             if (!ApplyPayloadAndRecalculate(sale, payload, out var error))
                 return BadRequest(new { message = error });
+
+            // Bills saved before line items existed have nothing to compare against: leave stock alone
+            if (pairsBefore != null)
+            {
+                var pairsAfter = PairsByProduct(sale.LineItemsJson) ?? new Dictionary<int, decimal>();
+                foreach (var productId in pairsBefore.Keys.Union(pairsAfter.Keys))
+                {
+                    var change = pairsAfter.GetValueOrDefault(productId) - pairsBefore.GetValueOrDefault(productId);
+                    var pairs = (int)decimal.Round(change, MidpointRounding.AwayFromZero);
+                    if (pairs == 0) continue;
+                    var product = await _context.Products.FindAsync(productId);
+                    if (product != null) product.Qty -= pairs;
+                }
+            }
+
             await _context.SaveChangesAsync();
             return NoContent();
+        }
+
+        // Pairs per product id in a bill's saved line items; null when they cannot be read
+        private static Dictionary<int, decimal>? PairsByProduct(string? lineItemsJson)
+        {
+            if (string.IsNullOrWhiteSpace(lineItemsJson)) return null;
+            JsonElement items;
+            try { items = JsonSerializer.Deserialize<JsonElement>(lineItemsJson); }
+            catch (JsonException) { return null; }
+            if (items.ValueKind != JsonValueKind.Array) return null;
+
+            var map = new Dictionary<int, decimal>();
+            foreach (var item in items.EnumerateArray())
+            {
+                if (!int.TryParse(ProductIdOf(item), out var productId)) continue;
+                var pairs = GetDecimal(item, "pairs");
+                if (pairs <= 0)
+                    pairs = GetDecimal(item, "qty") * (GetString(item, "unitType") == "pairs" ? 1m : 12m);
+                map[productId] = map.GetValueOrDefault(productId) + pairs;
+            }
+            return map;
         }
 
         [HttpDelete("{id}")]
@@ -123,7 +165,7 @@ namespace ShoeFactoryApi.Controllers
 
                 normalized.Add(new Dictionary<string, object?>
                 {
-                    ["productId"] = GetString(item, "productId") ?? "N/A",
+                    ["productId"] = ProductIdOf(item) ?? "N/A",
                     ["model"] = GetString(item, "model") ?? "Article",
                     ["size"] = GetString(item, "size") ?? "N/A",
                     ["qty"] = GetDecimal(item, "qty"),
@@ -151,6 +193,19 @@ namespace ShoeFactoryApi.Controllers
             if (v.ValueKind == JsonValueKind.Number && v.TryGetDecimal(out var d)) return d;
             if (v.ValueKind == JsonValueKind.String && decimal.TryParse(v.GetString(), out var s)) return s;
             return 0m;
+        }
+
+        // Product id sent as text or a number; older bills only carry it as "[Article No: 12]" in the description
+        private static string? ProductIdOf(JsonElement item)
+        {
+            if (item.TryGetProperty("productId", out var v))
+            {
+                if (v.ValueKind == JsonValueKind.Number) return v.GetRawText();
+                var text = v.ValueKind == JsonValueKind.String ? v.GetString()?.Trim() : null;
+                if (!string.IsNullOrEmpty(text) && text != "N/A") return text;
+            }
+            var match = Regex.Match(GetString(item, "description") ?? string.Empty, @"Article No:\s*([^\]\s]+)", RegexOptions.IgnoreCase);
+            return match.Success ? match.Groups[1].Value : null;
         }
 
         private static string? GetString(JsonElement el, string name)
