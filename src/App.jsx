@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useRef } from 'react'
 import axios from 'axios'
 import EntryModule from './entry/EntryModule'
 import MaterialUsagePanel from './production/MaterialUsagePanel'
@@ -184,6 +184,9 @@ export default function App() {
   const [newExp, setNewExp] = useState({ category: '', amount: '', notes: '', date: new Date().toISOString().split('T')[0] })
 
   const [paymentInputs, setPaymentInputs] = useState({})
+  // Customer ids whose cash payment is being saved; a ref so a fast double-click can't slip through
+  const paymentSavingRef = useRef(new Set())
+  const [savingPaymentFor, setSavingPaymentFor] = useState(null)
   const [updateStockInputs, setUpdateStockInputs] = useState({})
   const [updatePriceInputs, setUpdatePriceInputs] = useState({})
   const [customerDescriptionInputs, setCustomerDescriptionInputs] = useState({})
@@ -1381,7 +1384,7 @@ export default function App() {
       }))
     const paymentEntries = payments
       .filter(p => p.customerId === customer.phone || p.customer === customer.name)
-      .map(p => ({ key: `p-${p.id}`, kind: 'payment', date: dayOf(p.date), sortId: p.id, debit: 0, credit: numberOrZero(p.amount) }))
+      .map(p => ({ key: `p-${p.id}`, kind: 'payment', date: dayOf(p.date), at: p.date, sortId: p.id, debit: 0, credit: numberOrZero(p.amount) }))
 
     // Same day: bills first, then payments, each in the order they were entered
     const allEntries = [...billEntries, ...paymentEntries].sort((a, b) =>
@@ -1406,6 +1409,17 @@ export default function App() {
       totalBilled: entries.reduce((acc, e) => acc + e.debit, 0),
       totalPaid: entries.reduce((acc, e) => acc + e.credit, 0),
       netDue: allEntries.reduce((acc, e) => acc + e.debit - e.credit, numberOrZero(customer.balance))
+    }
+  }
+
+  // Admin only (the API also enforces this). Used to remove duplicate or mistaken cash payments.
+  const handleDeletePayment = async paymentId => {
+    try {
+      await axios.delete(`${API_BASE_URL}/api/payments/${paymentId}`, { headers: authHeaders() })
+      setPayments(prev => prev.filter(p => p.id !== paymentId))
+    } catch (err) {
+      const status = err.response?.status
+      throw new Error(status === 403 ? 'Only Admin users can delete payments.' : `Failed to delete payment (HTTP ${status || 'network'}).`, { cause: err })
     }
   }
 
@@ -2139,6 +2153,8 @@ export default function App() {
             sales={sales}
             invoiceNumber={getInvoiceNumber}
             onBack={() => setHistoryCustomerId(null)}
+            canDeletePayments={role === 'Admin'}
+            onDeletePayment={handleDeletePayment}
           />
         )}
 
@@ -2238,12 +2254,17 @@ export default function App() {
                               style={{ padding: '6px 8px', borderRadius: '4px', border: '1px solid #cbd5e1', width: '90px', fontSize: '13px' }}
                             />
                             <button
+                              disabled={savingPaymentFor === c.id}
                               onClick={() => {
+                                // Ignore a second click while this customer's payment is still saving
+                                if (paymentSavingRef.current.has(c.id)) return;
                                 const amount = Number(typedAmount);
                                 if (!amount || isNaN(amount) || amount <= 0) {
                                   alert("Please enter a valid cash amount.");
                                   return;
                                 }
+                                paymentSavingRef.current.add(c.id);
+                                setSavingPaymentFor(c.id);
 
                                 const newPaymentRecord = {
                                   customerId: c.phone,
@@ -2261,11 +2282,15 @@ export default function App() {
                                   .catch(err => {
                                     console.error('Error saving payment:', err);
                                     alert(`Failed to save payment (HTTP ${err.response?.status || 'network'}).`);
+                                  })
+                                  .finally(() => {
+                                    paymentSavingRef.current.delete(c.id);
+                                    setSavingPaymentFor(null);
                                   });
                               }}
-                              style={{ backgroundColor: '#16a34a', color: '#fff', border: 'none', padding: '7px 12px', borderRadius: '4px', cursor: 'pointer', fontWeight: '600', fontSize: '12px' }}
+                              style={{ backgroundColor: savingPaymentFor === c.id ? '#86efac' : '#16a34a', color: '#fff', border: 'none', padding: '7px 12px', borderRadius: '4px', cursor: savingPaymentFor === c.id ? 'wait' : 'pointer', fontWeight: '600', fontSize: '12px' }}
                             >
-                              Save
+                              {savingPaymentFor === c.id ? 'Saving…' : 'Save'}
                             </button>
                           </div>
                         </td>

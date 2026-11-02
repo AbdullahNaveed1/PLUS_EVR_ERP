@@ -317,6 +317,7 @@ th.em-num .em-sort { justify-content: flex-end; }
 .em-row-muted td { background: var(--em-subtle); }
 .em-row-total td { background: #f1f5f9; }
 .em-paid { color: var(--em-success); }
+.em-detail-actions { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
 .em-table .em-subrow td { padding: 0 10px 12px 10px; }
 .em-items-wrap { overflow-x: auto; }
 .em-items { width: 100%; border-collapse: collapse; font-size: 13px; min-width: 560px; }

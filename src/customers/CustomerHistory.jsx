@@ -1,4 +1,4 @@
-import { Fragment } from 'react'
+import { Fragment, useState } from 'react'
 import { formatDate, formatNumber } from '../entry/format'
 import '../entry/entry.css'
 
@@ -21,7 +21,34 @@ const itemsOf = sale => (sale?.lineItems || []).map(item => ({
   amount: Number(item.netAmount ?? item.grossAmount) || 0
 }))
 
-export default function CustomerHistory({ customer, ledger, sales, invoiceNumber, onBack }) {
+// Time a payment was saved, e.g. "3:42 PM", so same-day duplicates can be told apart
+const timeOf = value => {
+  if (!String(value || '').includes('T')) return ''
+  const d = new Date(value)
+  return Number.isNaN(d.getTime()) ? '' : d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })
+}
+
+export default function CustomerHistory({ customer, ledger, sales, invoiceNumber, onBack, canDeletePayments, onDeletePayment }) {
+  const [confirmPayment, setConfirmPayment] = useState(null)
+  const [deleting, setDeleting] = useState(false)
+  const [deleteError, setDeleteError] = useState('')
+
+  const closeConfirm = () => { if (!deleting) { setConfirmPayment(null); setDeleteError('') } }
+
+  const confirmDelete = async () => {
+    if (deleting) return
+    setDeleting(true)
+    setDeleteError('')
+    try {
+      await onDeletePayment(confirmPayment.sortId)
+      setConfirmPayment(null)
+    } catch (err) {
+      setDeleteError(err.message)
+    } finally {
+      setDeleting(false)
+    }
+  }
+
   const saleById = new Map(sales.map(s => [s.id, s]))
   const bills = ledger.entries.filter(e => e.kind === 'bill')
   const payments = ledger.entries.filter(e => e.kind === 'payment')
@@ -154,8 +181,20 @@ export default function CustomerHistory({ customer, ledger, sales, invoiceNumber
                 if (e.kind === 'payment') {
                   return (
                     <tr key={e.key}>
-                      <td data-label="Date">{formatDate(e.date)}</td>
-                      <td data-label="Detail">💵 Cash payment received</td>
+                      <td data-label="Date">
+                        {formatDate(e.date)}
+                        {timeOf(e.at) && <div className="em-hint">{timeOf(e.at)}</div>}
+                      </td>
+                      <td data-label="Detail">
+                        <div className="em-detail-actions">
+                          <span>💵 Cash payment received</span>
+                          {canDeletePayments && (
+                            <button type="button" className="em-btn em-btn-danger em-btn-sm" onClick={() => setConfirmPayment(e)}>
+                              Delete
+                            </button>
+                          )}
+                        </div>
+                      </td>
                       <td data-label="Bill" className="em-num">—</td>
                       <td data-label="Paid" className="em-num em-paid"><strong>{rs(e.credit)}</strong></td>
                       <td data-label="Balance" className="em-num"><strong>{balanceText(e.balance)}</strong></td>
@@ -217,6 +256,28 @@ export default function CustomerHistory({ customer, ledger, sales, invoiceNumber
           </table>
         </div>
       </div>
+
+      {confirmPayment && (
+        <div className="em-modal-backdrop" role="presentation" onClick={closeConfirm}>
+          <div className="em-modal" role="alertdialog" aria-modal="true" aria-labelledby="ch-delete-title" onClick={e => e.stopPropagation()}>
+            <h4 id="ch-delete-title">Delete this payment?</h4>
+            <p>
+              <strong>{rs(confirmPayment.credit)}</strong> from {customer.name} on {formatDate(confirmPayment.date)}
+              {timeOf(confirmPayment.at) ? ` at ${timeOf(confirmPayment.at)}` : ''}
+            </p>
+            <p className="em-muted">
+              The payment is removed permanently and the customer's balance goes back up by this amount. Use this only for a duplicate or mistaken entry.
+            </p>
+            {deleteError && <div className="em-banner em-banner-error" role="alert">{deleteError}</div>}
+            <div className="em-actions">
+              <button type="button" className="em-btn em-btn-ghost" onClick={closeConfirm} autoFocus>Keep it</button>
+              <button type="button" className="em-btn em-btn-danger" onClick={confirmDelete} aria-busy={deleting}>
+                {deleting ? 'Deleting…' : 'Delete payment'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

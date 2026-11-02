@@ -79,7 +79,8 @@ namespace ShoeFactoryApi.Controllers
             return Ok(existing);
         }
 
-        // DELETE: api/payments/5
+        // DELETE: api/payments/5 — Admin only, used to remove duplicate or mistaken payments
+        [Authorize(Roles = "Admin")]
         [HttpDelete("{id}")]
         public async Task<IActionResult> DeletePayment(int id)
         {
