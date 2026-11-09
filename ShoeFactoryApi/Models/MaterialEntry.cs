@@ -24,6 +24,9 @@ namespace ShoeFactoryApi.Models
         [MaxLength(20)]
         public string Kind { get; set; } = MaterialEntryKinds.Received;
 
+        // For "used" rows: the Raw Materials tab item whose Stock Qty this deduction lowered
+        public int? RawMaterialId { get; set; }
+
         [Required]
         [MaxLength(30)]
         public string Unit { get; set; } = string.Empty;

@@ -1,19 +1,18 @@
 import { useMemo, useRef, useState } from 'react'
-import { MATERIALS, UNITS, findMaterial } from './materials'
-import { validateEntry } from './entryLogic'
-import { balanceOf, isUsed } from './stock'
+import { findMaterial } from './materials'
+import { isUsed } from './stock'
 import { dash, formatDate, formatNumber, todayISO } from './format'
 
-// Production deduction: raw material taken out of stock for production.
-// Saved as Material Entry rows with kind "used", so stock = received − used.
+// Production deduction: raw material taken out for production. The server lowers the
+// Stock Qty of the chosen Raw Materials tab item, and puts it back if the deduction is deleted.
 
 const emptyForm = (enteredBy, date = todayISO()) => ({
-  date, material: '', quantity: '', unit: '', articleNo: '', remarks: '', enteredBy: enteredBy || ''
+  date, rawMaterialId: '', quantity: '', articleNo: '', remarks: '', enteredBy: enteredBy || ''
 })
 
 const Optional = () => <span className="em-optional">optional</span>
 
-export default function DeductionSection({ entries, username, onSave, onVoid, onRestore }) {
+export default function DeductionSection({ entries, rawMaterials, username, onSave, onVoid, onRestore }) {
   const [form, setForm] = useState(() => emptyForm(username))
   const [errors, setErrors] = useState({})
   const [saveError, setSaveError] = useState('')
@@ -24,28 +23,38 @@ export default function DeductionSection({ entries, username, onSave, onVoid, on
   const [showVoided, setShowVoided] = useState(false)
   const [confirmEntry, setConfirmEntry] = useState(null)
   const quantityRef = useRef(null)
+  const materialRef = useRef(null)
 
   const set = (field, value) => {
     setForm(prev => ({ ...prev, [field]: value }))
     if (errors[field]) setErrors(prev => ({ ...prev, [field]: undefined }))
   }
 
-  const handleMaterialChange = value => {
-    const match = findMaterial(value)
-    setForm(prev => ({ ...prev, material: value, unit: match ? match.unit : prev.unit }))
-    if (errors.material || errors.unit) setErrors(prev => ({ ...prev, material: undefined, unit: undefined }))
-  }
-
-  const material = findMaterial(form.material)
-  const inStock = material && form.unit.trim() ? balanceOf(entries, material.name, form.unit.trim()) : null
+  const sortedMaterials = useMemo(
+    () => [...rawMaterials].sort((a, b) => String(a.name).localeCompare(String(b.name))),
+    [rawMaterials]
+  )
+  const material = rawMaterials.find(m => String(m.id) === String(form.rawMaterialId))
+  const inStock = material ? Number(material.stockQty) || 0 : null
   const overdraw = inStock !== null && Number(form.quantity) > inStock
+
+  const validate = () => {
+    const found = {}
+    if (!form.date) found.date = 'Pick the date.'
+    if (!material) found.material = 'Choose a material.'
+    if (form.quantity === '') found.quantity = 'Enter the quantity used.'
+    else if (!(Number(form.quantity) > 0)) found.quantity = 'Quantity must be more than 0.'
+    return found
+  }
 
   const handleSubmit = async e => {
     e.preventDefault()
     if (saving) return
-    const found = validateEntry(form)
+    const found = validate()
     setErrors(found)
     setSaveError('')
+    if (found.material) materialRef.current?.focus()
+    else if (found.quantity) quantityRef.current?.focus()
     if (Object.values(found).some(Boolean)) return
 
     setSaving(true)
@@ -53,9 +62,10 @@ export default function DeductionSection({ entries, username, onSave, onVoid, on
       await onSave({
         kind: 'used',
         date: form.date,
+        rawMaterialId: material.id,
         material: material.name,
         quantity: Number(form.quantity),
-        unit: form.unit.trim(),
+        unit: material.unit,
         articleNo: form.articleNo,
         remarks: form.remarks,
         enteredBy: form.enteredBy
@@ -92,7 +102,7 @@ export default function DeductionSection({ entries, username, onSave, onVoid, on
       <form className="em-card em-form" onSubmit={handleSubmit} noValidate>
         <div className="em-card-head">
           <h3>➖ Production Deduction</h3>
-          <span className="em-muted">Raw material taken out for production. It is subtracted from stock.</span>
+          <span className="em-muted">Raw material taken out for production. It is subtracted from the Raw Materials tab stock.</span>
         </div>
 
         {saveError && <div className="em-banner em-banner-error" role="alert">{saveError}</div>}
@@ -106,17 +116,12 @@ export default function DeductionSection({ entries, username, onSave, onVoid, on
 
           <label className="em-field">
             <span className="em-label">Material</span>
-            <input
-              list="em-ded-material-list"
-              placeholder="Type to search…"
-              value={form.material}
-              onChange={e => handleMaterialChange(e.target.value)}
-              aria-invalid={!!errors.material}
-              autoComplete="off"
-            />
-            <datalist id="em-ded-material-list">
-              {MATERIALS.map(m => <option key={m.name} value={m.name} />)}
-            </datalist>
+            <select ref={materialRef} value={form.rawMaterialId} onChange={e => set('rawMaterialId', e.target.value)} aria-invalid={!!errors.material}>
+              <option value="">{sortedMaterials.length ? 'Choose material…' : 'Add materials on the Raw Materials tab first'}</option>
+              {sortedMaterials.map(m => (
+                <option key={m.id} value={String(m.id)}>{m.name} ({formatNumber(Number(m.stockQty) || 0)} {m.unit} in stock)</option>
+              ))}
+            </select>
             {errors.material && <span className="em-error">{errors.material}</span>}
           </label>
 
@@ -136,25 +141,14 @@ export default function DeductionSection({ entries, username, onSave, onVoid, on
             {errors.quantity && <span className="em-error">{errors.quantity}</span>}
             {inStock !== null && (
               <span className={overdraw ? 'em-error' : 'em-hint'}>
-                In stock: {formatNumber(inStock)} {form.unit}{overdraw ? ' — this is more than the stock' : ''}
+                In stock: {formatNumber(inStock)} {material.unit}{overdraw ? ' — this is more than the stock' : ''}
               </span>
             )}
           </label>
 
           <label className="em-field">
             <span className="em-label">Unit</span>
-            <input
-              list="em-ded-unit-list"
-              placeholder="pcs / kg / pairs"
-              value={form.unit}
-              onChange={e => set('unit', e.target.value)}
-              aria-invalid={!!errors.unit}
-              autoComplete="off"
-            />
-            <datalist id="em-ded-unit-list">
-              {UNITS.map(u => <option key={u} value={u} />)}
-            </datalist>
-            {errors.unit && <span className="em-error">{errors.unit}</span>}
+            <input className="em-readonly" value={material?.unit || ''} placeholder="From the material" readOnly />
           </label>
 
           <label className="em-field">
@@ -202,7 +196,7 @@ export default function DeductionSection({ entries, username, onSave, onVoid, on
             <span>Material</span>
             <select value={materialFilter} onChange={e => setMaterialFilter(e.target.value)}>
               <option value="">All materials</option>
-              {MATERIALS.map(m => <option key={m.name} value={m.name}>{m.name}</option>)}
+              {[...new Set(entries.filter(isUsed).map(e => e.material))].sort().map(name => <option key={name} value={name}>{name}</option>)}
             </select>
           </label>
         </div>
@@ -259,7 +253,7 @@ export default function DeductionSection({ entries, username, onSave, onVoid, on
           <div className="em-modal" role="alertdialog" aria-modal="true" aria-labelledby="em-ded-confirm" onClick={e => e.stopPropagation()}>
             <h4 id="em-ded-confirm">Delete this deduction?</h4>
             <p>{formatDate(confirmEntry.date)} · {confirmEntry.material} · {formatNumber(confirmEntry.quantity)} {confirmEntry.unit}</p>
-            <p className="em-muted">The quantity goes back into stock. You can undo right away, or restore it later with "Show deleted".</p>
+            <p className="em-muted">The quantity goes back into the Raw Materials tab stock. You can undo right away, or restore it later with "Show deleted".</p>
             <div className="em-actions">
               <button type="button" className="em-btn em-btn-ghost" onClick={() => setConfirmEntry(null)} autoFocus>Keep it</button>
               <button type="button" className="em-btn em-btn-danger" onClick={() => { onVoid(confirmEntry); setConfirmEntry(null) }}>Delete</button>

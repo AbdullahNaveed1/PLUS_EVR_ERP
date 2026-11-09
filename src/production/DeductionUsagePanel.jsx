@@ -12,7 +12,7 @@ const formatRate = value => (value === null || value === undefined ? '—' : rat
 
 const monthStartISO = () => `${todayISO().slice(0, 8)}01`
 
-export default function DeductionUsagePanel({ token, production }) {
+export default function DeductionUsagePanel({ token, production, rawMaterials = [] }) {
   const repo = useMemo(() => createEntryRepository(token), [token])
   const [entries, setEntries] = useState([])
   const [loading, setLoading] = useState(true)
@@ -27,7 +27,18 @@ export default function DeductionUsagePanel({ token, production }) {
       .finally(() => setLoading(false))
   }, [repo])
 
-  const report = useMemo(() => usageReport(entries, production, fromDate, toDate), [entries, production, fromDate, toDate])
+  // "In stock now" comes from the Raw Materials tab, which deductions lower
+  const report = useMemo(() => {
+    const base = usageReport(entries, production, fromDate, toDate)
+    const rawByName = new Map(rawMaterials.map(m => [String(m.name).trim().toLowerCase(), m]))
+    return {
+      ...base,
+      rows: base.rows.map(r => {
+        const raw = rawByName.get(String(r.material).trim().toLowerCase())
+        return raw ? { ...r, balance: Number(raw.stockQty) || 0 } : r
+      })
+    }
+  }, [entries, production, fromDate, toDate, rawMaterials])
 
   return (
     <div className="em-root em-plain">

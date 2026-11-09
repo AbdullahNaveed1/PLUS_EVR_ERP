@@ -3,7 +3,7 @@
 
 export const isUsed = entry => entry.kind === 'used'
 const live = entries => entries.filter(e => !e.voided)
-const keyOf = e => `${e.material.toLowerCase()}|${String(e.unit || '').toLowerCase()}`
+const keyOf = e => `${String(e.material).trim().toLowerCase()}|${String(e.unit || '').trim().toLowerCase()}`
 const inRange = (date, from, to) => (!from || date >= from) && (!to || date <= to)
 
 // Per material and unit: received, used and balance. Different units are kept apart

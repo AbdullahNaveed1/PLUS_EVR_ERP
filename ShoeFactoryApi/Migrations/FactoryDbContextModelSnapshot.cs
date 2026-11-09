@@ -220,6 +220,9 @@ namespace ShoeFactoryApi.Migrations
                         .HasPrecision(18, 4)
                         .HasColumnType("numeric(18,4)");
 
+                    b.Property<int?>("RawMaterialId")
+                        .HasColumnType("integer");
+
                     b.Property<string>("Remarks")
                         .HasMaxLength(1000)
                         .HasColumnType("character varying(1000)");

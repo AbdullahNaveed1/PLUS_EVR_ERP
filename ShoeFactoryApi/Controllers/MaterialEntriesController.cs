@@ -39,6 +39,8 @@ namespace ShoeFactoryApi.Controllers
         {
             var entry = new MaterialEntry { Id = Guid.NewGuid(), CreatedAt = DateTime.UtcNow };
             if (!Apply(entry, input, out var error)) return BadRequest(new { message = error });
+            var stockError = await TakeFromRawMaterial(entry, input.RawMaterialId);
+            if (stockError != null) return BadRequest(new { message = stockError });
 
             _db.MaterialEntries.Add(entry);
             await _db.SaveChangesAsync();
@@ -50,7 +52,12 @@ namespace ShoeFactoryApi.Controllers
         {
             var entry = await _db.MaterialEntries.FindAsync(id);
             if (entry == null) return NotFound();
+
+            // Undo the old deduction, then apply the edited one
+            await ReturnToRawMaterial(entry);
             if (!Apply(entry, input, out var error)) return BadRequest(new { message = error });
+            var stockError = await TakeFromRawMaterial(entry, input.RawMaterialId ?? entry.RawMaterialId);
+            if (stockError != null) return BadRequest(new { message = stockError });
 
             await _db.SaveChangesAsync();
             return Ok(entry);
@@ -68,7 +75,16 @@ namespace ShoeFactoryApi.Controllers
             var entry = await _db.MaterialEntries.FindAsync(id);
             if (entry == null) return NotFound();
 
+            if (entry.Voided == voided) return Ok(entry);
+
+            // A deleted deduction goes back into Raw Materials stock; restoring takes it out again
+            if (voided) await ReturnToRawMaterial(entry);
             entry.Voided = voided;
+            if (!voided)
+            {
+                var stockError = await TakeFromRawMaterial(entry, entry.RawMaterialId);
+                if (stockError != null) return BadRequest(new { message = stockError });
+            }
             entry.UpdatedAt = DateTime.UtcNow;
             await _db.SaveChangesAsync();
             return Ok(entry);
@@ -114,6 +130,31 @@ namespace ShoeFactoryApi.Controllers
             return true;
         }
 
+        // A live "used" row lowers the Stock Qty of its Raw Materials tab item (picked by id, else by name)
+        private async Task<string?> TakeFromRawMaterial(MaterialEntry entry, int? rawMaterialId)
+        {
+            if (entry.Kind != MaterialEntryKinds.Used || entry.Voided) return null;
+
+            var name = entry.Material.Trim().ToLower();
+            var raw = rawMaterialId.HasValue
+                ? await _db.RawMaterials.FindAsync(rawMaterialId.Value)
+                : await _db.RawMaterials.OrderBy(r => r.Id).FirstOrDefaultAsync(r => r.Name.Trim().ToLower() == name);
+            if (raw == null) return $"'{entry.Material}' is not on the Raw Materials tab. Add it there first.";
+
+            entry.RawMaterialId = raw.Id;
+            entry.Material = raw.Name;
+            entry.Unit = raw.Unit;
+            raw.StockQty -= entry.Quantity;
+            return null;
+        }
+
+        private async Task ReturnToRawMaterial(MaterialEntry entry)
+        {
+            if (entry.Kind != MaterialEntryKinds.Used || entry.Voided || !entry.RawMaterialId.HasValue) return;
+            var raw = await _db.RawMaterials.FindAsync(entry.RawMaterialId.Value);
+            if (raw != null) raw.StockQty += entry.Quantity;
+        }
+
         private static string? Clean(string? value)
             => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
     }
@@ -124,6 +165,7 @@ namespace ShoeFactoryApi.Controllers
         public string? Material { get; set; }
         public decimal? Quantity { get; set; }
         public string? Kind { get; set; }
+        public int? RawMaterialId { get; set; }
         public string? Unit { get; set; }
         public string? ArticleNo { get; set; }
         public string? Size { get; set; }

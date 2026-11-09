@@ -22,10 +22,12 @@ namespace ShoeFactoryApi.Controllers
         [HttpGet]
         public async Task<ActionResult<IEnumerable<ProductionRecord>>> GetAll()
         {
-            return await _db.ProductionRecords
+            var records = await _db.ProductionRecords
                 .OrderByDescending(p => p.Date)
                 .ThenByDescending(p => p.Id)
                 .ToListAsync();
+            records.ForEach(r => r.Sizes = ReadSizes(r.SizesJson));
+            return records;
         }
 
         // GET api/production/wages?startDate=2026-01-01&endDate=2026-01-07

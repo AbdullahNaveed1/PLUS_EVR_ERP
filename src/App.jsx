@@ -1587,6 +1587,16 @@ export default function App() {
     }
   }
 
+  // Production deductions change Raw Materials stock on the server, so reload it afterwards
+  const refreshRawMaterials = async () => {
+    try {
+      const res = await axios.get(`${API_BASE_URL}/api/rawmaterials`, { headers: authHeaders() })
+      setRawMaterials(res.data || [])
+    } catch (err) {
+      console.error('Reload raw materials failed:', err)
+    }
+  }
+
   // ===== NEW: Production CRUD handlers (backend-backed) =====
   const handleAddProduction = async (e) => {
     e.preventDefault()
@@ -2879,13 +2889,13 @@ export default function App() {
               </table>
             </div>
 
-            <DeductionUsagePanel token={token} production={productionRecords} />
+            <DeductionUsagePanel token={token} production={productionRecords} rawMaterials={rawMaterials} />
 
             <MaterialUsagePanel token={token} production={productionRecords} />
           </div>
         )}
 
-        {activeTab === 'entry' && <EntryModule key={entrySection} token={token} username={username} initialSection={entrySection} />}
+        {activeTab === 'entry' && <EntryModule key={entrySection} token={token} username={username} initialSection={entrySection} rawMaterials={rawMaterials} onRawMaterialsChanged={refreshRawMaterials} />}
 
         {/* ============================== Raw Materials tab ============================== */}
         {activeTab === 'rawmaterials' && (

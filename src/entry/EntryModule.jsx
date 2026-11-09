@@ -12,13 +12,13 @@ import './entry.css'
 const SECTIONS = [
   { id: 'entry', label: 'Entry', icon: '📥', ready: true, title: 'Material Entry', subtitle: 'Goods received' },
   { id: 'issue', label: 'Production Deduction', icon: '➖', ready: true, title: 'Production Deduction', subtitle: 'Material used' },
-  { id: 'stock', label: 'Stock', icon: '📦', ready: true, title: 'Material Stock', subtitle: 'Received − used' },
+  { id: 'stock', label: 'Stock', icon: '📦', ready: true, title: 'Material Stock', subtitle: 'Raw Materials tab' },
   { id: 'reports', label: 'Reports', icon: '📊', ready: false }
 ]
 
 const TOAST_MS = 6000
 
-export default function EntryModule({ token, username, initialSection = 'entry' }) {
+export default function EntryModule({ token, username, initialSection = 'entry', rawMaterials = [], onRawMaterialsChanged }) {
   const repo = useMemo(() => createEntryRepository(token), [token])
   const [entries, setEntries] = useState([])
   const [section, setSection] = useState(initialSection)
@@ -54,6 +54,7 @@ export default function EntryModule({ token, username, initialSection = 'entry' 
     try {
       const saved = await repo.create(payload)
       setEntries(prev => [saved, ...prev])
+      if (isUsed(saved)) onRawMaterialsChanged?.()
       showToast(`${isUsed(saved) ? 'Deducted' : 'Saved'}: ${formatNumber(saved.quantity)} ${saved.unit} ${saved.material}`)
     } catch (err) {
       throw new Error(errorMessage(err), { cause: err })
@@ -72,6 +73,7 @@ export default function EntryModule({ token, username, initialSection = 'entry' 
   const handleRestore = async entry => {
     try {
       replaceEntry(await repo.restore(entry.id))
+      if (isUsed(entry)) onRawMaterialsChanged?.()
       showToast('Entry restored')
     } catch (err) {
       showToast(errorMessage(err), { tone: 'error' })
@@ -81,6 +83,7 @@ export default function EntryModule({ token, username, initialSection = 'entry' 
   const handleVoid = async entry => {
     try {
       replaceEntry(await repo.void(entry.id))
+      if (isUsed(entry)) onRawMaterialsChanged?.()
       showToast(`Deleted ${entry.material} entry`, {
         tone: 'neutral',
         action: { label: 'Undo', run: () => handleRestore(entry) }
@@ -155,9 +158,9 @@ export default function EntryModule({ token, username, initialSection = 'entry' 
             <button type="button" className="em-btn em-btn-ghost em-btn-sm" onClick={retryLoad}>Try again</button>
           </div>
         ) : section === 'issue' ? (
-          <DeductionSection entries={entries} username={username} onSave={handleCreate} onVoid={handleVoid} onRestore={handleRestore} />
+          <DeductionSection entries={entries} rawMaterials={rawMaterials} username={username} onSave={handleCreate} onVoid={handleVoid} onRestore={handleRestore} />
         ) : section === 'stock' ? (
-          <StockSection entries={entries} />
+          <StockSection entries={entries} rawMaterials={rawMaterials} />
         ) : (
           <EntryTable
             entries={receivedEntries}
