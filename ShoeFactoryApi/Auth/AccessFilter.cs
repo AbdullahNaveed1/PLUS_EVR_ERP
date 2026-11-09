@@ -30,7 +30,9 @@ namespace ShoeFactoryApi.Auth
             ["MaterialEntries"] = new[] { "entry", "rawmaterials" },
             ["Expenses"] = new[] { "expenses" },
             ["Wages"] = new[] { "wages" },
-            ["Workers"] = new[] { "wages" }
+            ["Workers"] = new[] { "wages" },
+            ["Suppliers"] = new[] { "suppliers" },
+            ["SalesReturns"] = new[] { "sales" }
         };
 
         private readonly FactoryDbContext _db;

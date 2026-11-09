@@ -36,6 +36,9 @@ namespace ShoeFactoryApi.Data
         public DbSet<MaterialEntry> MaterialEntries => Set<MaterialEntry>();
         public DbSet<MaterialCount> MaterialCounts => Set<MaterialCount>();
         public DbSet<AuditLog> AuditLogs => Set<AuditLog>();
+        public DbSet<Supplier> Suppliers => Set<Supplier>();
+        public DbSet<SupplierPayment> SupplierPayments => Set<SupplierPayment>();
+        public DbSet<SalesReturn> SalesReturns => Set<SalesReturn>();
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
@@ -125,6 +128,17 @@ namespace ShoeFactoryApi.Data
             // ===== Daily remaining-material counts: one per material per day =====
             modelBuilder.Entity<MaterialCount>().Property(c => c.RemainingQty).HasPrecision(18, 4);
             modelBuilder.Entity<MaterialCount>().HasIndex(c => new { c.Date, c.Material }).IsUnique();
+
+            // ===== Suppliers, purchases and sales returns =====
+            modelBuilder.Entity<Supplier>().HasIndex(s => s.Name).IsUnique();
+            modelBuilder.Entity<Supplier>().Property(s => s.OpeningBalance).HasPrecision(18, 2);
+            modelBuilder.Entity<SupplierPayment>().Property(p => p.Amount).HasPrecision(18, 2);
+            modelBuilder.Entity<SupplierPayment>().HasIndex(p => p.SupplierId);
+            modelBuilder.Entity<MaterialEntry>().HasIndex(e => e.SupplierId);
+            modelBuilder.Entity<MaterialEntry>().HasIndex(e => e.ProductionRecordId);
+            modelBuilder.Entity<SalesReturn>().Property(r => r.Total).HasPrecision(18, 2);
+            modelBuilder.Entity<SalesReturn>().HasIndex(r => r.SaleId);
+            modelBuilder.Entity<SalesReturn>().HasIndex(r => r.CustomerId);
 
             // ===== Audit log =====
             modelBuilder.Entity<AuditLog>().HasIndex(a => a.At);

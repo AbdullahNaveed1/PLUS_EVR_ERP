@@ -8,6 +8,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using ShoeFactoryApi.Data;
 using ShoeFactoryApi.Models;
+using ShoeFactoryApi.Services;
 
 namespace ShoeFactoryApi.Controllers
 {
@@ -95,8 +96,13 @@ namespace ShoeFactoryApi.Controllers
             ApplySizes(input, sizes);
             await MoveStock(new List<ProductionSize>(), sizes);
 
+            // The record needs its id before recipe deductions can point at it; both saves are one transaction
+            await using var tx = await _db.Database.BeginTransactionAsync();
             _db.ProductionRecords.Add(input);
             await _db.SaveChangesAsync();
+            await RecipeDeductions.Sync(_db, input, User.Identity?.Name);
+            await _db.SaveChangesAsync();
+            await tx.CommitAsync();
             return CreatedAtAction(nameof(GetById), new { id = input.Id }, input);
         }
 
@@ -117,6 +123,8 @@ namespace ShoeFactoryApi.Controllers
             existing.Pairs = input.Pairs;
             ApplySizes(existing, after);
             await MoveStock(before, after);
+            // Recipe material is worked out again from the new article / quantity
+            await RecipeDeductions.Sync(_db, existing, User.Identity?.Name);
 
             await _db.SaveChangesAsync();
             return Ok(existing);
@@ -129,6 +137,7 @@ namespace ShoeFactoryApi.Controllers
             if (existing == null) return NotFound();
 
             await MoveStock(ReadSizes(existing.SizesJson), new List<ProductionSize>());
+            await RecipeDeductions.Sync(_db, existing, User.Identity?.Name, removeOnly: true);
             _db.ProductionRecords.Remove(existing);
             await _db.SaveChangesAsync();
             return NoContent();

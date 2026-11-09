@@ -4,6 +4,7 @@ import EntryTable from './EntryTable'
 import DeductionSection from './DeductionSection'
 import StockSection from './StockSection'
 import { isUsed } from './stock'
+import axios from 'axios'
 import { createEntryRepository, errorMessage } from './entryRepository'
 import { formatNumber, todayISO } from './format'
 import './entry.css'
@@ -17,6 +18,7 @@ const SECTIONS = [
 ]
 
 const TOAST_MS = 6000
+const API_BASE_URL = import.meta.env.VITE_API_URL || ''
 
 export default function EntryModule({ token, username, initialSection = 'entry', rawMaterials = [], onRawMaterialsChanged }) {
   const repo = useMemo(() => createEntryRepository(token), [token])
@@ -43,6 +45,14 @@ export default function EntryModule({ token, username, initialSection = 'entry',
 
   useEffect(() => { fetchEntries() }, [fetchEntries])
 
+  // Suppliers for the purchase form (their khata is on the Suppliers tab)
+  const [supplierList, setSupplierList] = useState([])
+  useEffect(() => {
+    axios.get(`${API_BASE_URL}/api/suppliers`, { headers: { Authorization: `Bearer ${token}` } })
+      .then(res => setSupplierList(res.data))
+      .catch(() => setSupplierList([]))
+  }, [token])
+
   const retryLoad = () => {
     setLoading(true)
     fetchEntries()
@@ -54,7 +64,8 @@ export default function EntryModule({ token, username, initialSection = 'entry',
     try {
       const saved = await repo.create(payload)
       setEntries(prev => [saved, ...prev])
-      if (isUsed(saved)) onRawMaterialsChanged?.()
+      // Received and used rows both change Raw Materials stock
+      onRawMaterialsChanged?.()
       showToast(`${isUsed(saved) ? 'Deducted' : 'Saved'}: ${formatNumber(saved.quantity)} ${saved.unit} ${saved.material}`)
     } catch (err) {
       throw new Error(errorMessage(err), { cause: err })
@@ -64,6 +75,7 @@ export default function EntryModule({ token, username, initialSection = 'entry',
   const handleUpdate = async (id, payload) => {
     try {
       replaceEntry(await repo.update(id, payload))
+      onRawMaterialsChanged?.()
       showToast('Entry updated')
     } catch (err) {
       throw new Error(errorMessage(err), { cause: err })
@@ -73,7 +85,7 @@ export default function EntryModule({ token, username, initialSection = 'entry',
   const handleRestore = async entry => {
     try {
       replaceEntry(await repo.restore(entry.id))
-      if (isUsed(entry)) onRawMaterialsChanged?.()
+      onRawMaterialsChanged?.()
       showToast('Entry restored')
     } catch (err) {
       showToast(errorMessage(err), { tone: 'error' })
@@ -83,7 +95,7 @@ export default function EntryModule({ token, username, initialSection = 'entry',
   const handleVoid = async entry => {
     try {
       replaceEntry(await repo.void(entry.id))
-      if (isUsed(entry)) onRawMaterialsChanged?.()
+      onRawMaterialsChanged?.()
       showToast(`Deleted ${entry.material} entry`, {
         tone: 'neutral',
         action: { label: 'Undo', run: () => handleRestore(entry) }
@@ -146,7 +158,7 @@ export default function EntryModule({ token, username, initialSection = 'entry',
               <div><span>Materials today</span><strong>{formatNumber(today.materials)}</strong></div>
             </div>
 
-            <EntryForm username={username} suppliers={suppliers} onSave={handleCreate} />
+            <EntryForm username={username} rawMaterials={rawMaterials} supplierList={supplierList} onSave={handleCreate} />
           </>
         )}
 
@@ -165,6 +177,7 @@ export default function EntryModule({ token, username, initialSection = 'entry',
           <EntryTable
             entries={receivedEntries}
             suppliers={suppliers}
+            rawMaterials={rawMaterials}
             onUpdate={handleUpdate}
             onVoid={handleVoid}
             onRestore={handleRestore}

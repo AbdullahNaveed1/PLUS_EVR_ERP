@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using ShoeFactoryApi.Data;
 using ShoeFactoryApi.Models;
+using ShoeFactoryApi.Services;
 
 namespace ShoeFactoryApi.Controllers
 {
@@ -12,6 +13,7 @@ namespace ShoeFactoryApi.Controllers
     public class MaterialEntriesController : ControllerBase
     {
         private readonly FactoryDbContext _db;
+        private int? _pendingSupplierId;
         public MaterialEntriesController(FactoryDbContext db) { _db = db; }
 
         // GET api/material-entries?includeVoided=true
@@ -39,6 +41,7 @@ namespace ShoeFactoryApi.Controllers
         {
             var entry = new MaterialEntry { Id = Guid.NewGuid(), CreatedAt = DateTime.UtcNow };
             if (!Apply(entry, input, out var error)) return BadRequest(new { message = error });
+            _pendingSupplierId = input.SupplierId;
             var stockError = await TakeFromRawMaterial(entry, input.RawMaterialId);
             if (stockError != null) return BadRequest(new { message = stockError });
 
@@ -56,6 +59,7 @@ namespace ShoeFactoryApi.Controllers
             // Undo the old deduction, then apply the edited one
             await ReturnToRawMaterial(entry);
             if (!Apply(entry, input, out var error)) return BadRequest(new { message = error });
+            _pendingSupplierId = input.SupplierId ?? entry.SupplierId;
             var stockError = await TakeFromRawMaterial(entry, input.RawMaterialId ?? entry.RawMaterialId);
             if (stockError != null) return BadRequest(new { message = stockError });
 
@@ -82,6 +86,7 @@ namespace ShoeFactoryApi.Controllers
             entry.Voided = voided;
             if (!voided)
             {
+                _pendingSupplierId = entry.SupplierId;
                 var stockError = await TakeFromRawMaterial(entry, entry.RawMaterialId);
                 if (stockError != null) return BadRequest(new { message = stockError });
             }
@@ -130,29 +135,28 @@ namespace ShoeFactoryApi.Controllers
             return true;
         }
 
-        // A live "used" row lowers the Stock Qty of its Raw Materials tab item (picked by id, else by name)
+        // Received rows add to Raw Materials stock, used rows take from it (see MaterialStock)
         private async Task<string?> TakeFromRawMaterial(MaterialEntry entry, int? rawMaterialId)
         {
-            if (entry.Kind != MaterialEntryKinds.Used || entry.Voided) return null;
-
-            var name = entry.Material.Trim().ToLower();
-            var raw = rawMaterialId.HasValue
-                ? await _db.RawMaterials.FindAsync(rawMaterialId.Value)
-                : await _db.RawMaterials.OrderBy(r => r.Id).FirstOrDefaultAsync(r => r.Name.Trim().ToLower() == name);
-            if (raw == null) return $"'{entry.Material}' is not on the Raw Materials tab. Add it there first.";
-
-            entry.RawMaterialId = raw.Id;
-            entry.Material = raw.Name;
-            entry.Unit = raw.Unit;
-            raw.StockQty -= entry.Quantity;
-            return null;
+            var error = await MaterialStock.Apply(_db, entry, rawMaterialId);
+            return error ?? await LinkSupplier(entry);
         }
 
-        private async Task ReturnToRawMaterial(MaterialEntry entry)
+        private Task ReturnToRawMaterial(MaterialEntry entry) => MaterialStock.Reverse(_db, entry);
+
+        // A purchase picked from the supplier list goes into that supplier's khata
+        private async Task<string?> LinkSupplier(MaterialEntry entry)
         {
-            if (entry.Kind != MaterialEntryKinds.Used || entry.Voided || !entry.RawMaterialId.HasValue) return;
-            var raw = await _db.RawMaterials.FindAsync(entry.RawMaterialId.Value);
-            if (raw != null) raw.StockQty += entry.Quantity;
+            if (entry.Kind == MaterialEntryKinds.Used || !_pendingSupplierId.HasValue)
+            {
+                entry.SupplierId = null;
+                return null;
+            }
+            var supplier = await _db.Suppliers.FindAsync(_pendingSupplierId.Value);
+            if (supplier == null) return "Supplier not found.";
+            entry.SupplierId = supplier.Id;
+            entry.Supplier = supplier.Name;
+            return null;
         }
 
         private static string? Clean(string? value)
@@ -166,6 +170,7 @@ namespace ShoeFactoryApi.Controllers
         public decimal? Quantity { get; set; }
         public string? Kind { get; set; }
         public int? RawMaterialId { get; set; }
+        public int? SupplierId { get; set; }
         public string? Unit { get; set; }
         public string? ArticleNo { get; set; }
         public string? Size { get; set; }

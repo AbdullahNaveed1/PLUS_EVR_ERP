@@ -1,12 +1,17 @@
 // Validation and payload rules shared by the entry form and the table's inline edit
-import { findMaterial } from './materials'
+
+const sameName = (a, b) => String(a || '').trim().toLowerCase() === String(b || '').trim().toLowerCase()
+
+// The Raw Materials tab item a typed name refers to
+export const findRawMaterial = (rawMaterials, name) => rawMaterials.find(m => sameName(m.name, name))
 
 // Only date, material and quantity (plus a unit) can block saving. Optional fields never do.
-export const validateEntry = entry => {
+// Material must be an item on the Raw Materials tab, because receiving it adds to that stock.
+export const validateEntry = (entry, rawMaterials = []) => {
   const errors = {}
   if (!entry.date) errors.date = 'Pick the date of entry.'
   if (!entry.material) errors.material = 'Choose a material.'
-  else if (!findMaterial(entry.material)) errors.material = 'Choose a material from the list.'
+  else if (!findRawMaterial(rawMaterials, entry.material)) errors.material = 'Choose a material from the Raw Materials list (add new ones on the Raw Materials tab).'
   if (entry.quantity === '' || entry.quantity === null || entry.quantity === undefined) errors.quantity = 'Enter the quantity.'
   else if (!(Number(entry.quantity) > 0)) errors.quantity = 'Quantity must be more than 0.'
   if (!String(entry.unit || '').trim()) errors.unit = 'Enter a unit.'
@@ -23,9 +28,10 @@ export const computeAmount = (quantity, rate, amount) => {
 }
 
 // Convert form strings into the API payload
-export const toPayload = form => ({
+export const toPayload = (form, rawMaterials = []) => ({
   date: form.date,
-  material: findMaterial(form.material)?.name || form.material.trim(),
+  material: findRawMaterial(rawMaterials, form.material)?.name || form.material.trim(),
+  supplierId: form.supplierId ? Number(form.supplierId) : null,
   quantity: Number(form.quantity),
   unit: form.unit.trim(),
   articleNo: form.articleNo,

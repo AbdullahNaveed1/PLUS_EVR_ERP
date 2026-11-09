@@ -6,6 +6,10 @@ import DeductionUsagePanel from './production/DeductionUsagePanel'
 import ProductionSizes from './production/ProductionSizes'
 import { describeSizes, emptySize, sizeTotals, toSizePayload } from './production/sizeRows'
 import CustomerHistory from './customers/CustomerHistory'
+import SuppliersPage from './suppliers/SuppliersPage'
+import RecipesPanel from './production/RecipesPanel'
+import ReturnModal from './sales/ReturnModal'
+import { printReturnSlip } from './sales/returnSlip'
 import EditBillModal from './sales/EditBillModal'
 import UsersPage from './admin/UsersPage'
 import AuditPage from './admin/AuditPage'
@@ -222,6 +226,8 @@ export default function App() {
   ])
 
   const [editingBill, setEditingBill] = useState(null)
+  const [salesReturns, setSalesReturns] = useState([])
+  const [returningSale, setReturningSale] = useState(null)
   const [selectedSaleIds, setSelectedSaleIds] = useState([])
 
   // ===== NEW: Production / Raw Materials states =====
@@ -285,12 +291,14 @@ export default function App() {
         axios.get(`${API_BASE_URL}/api/sales`, { headers }),
         axios.get(`${API_BASE_URL}/api/payments`, { headers })
       ])
-      const [workersRes, wagePaymentsRes, rawRes, prodRes2] = await Promise.all([
+      const [workersRes, wagePaymentsRes, rawRes, prodRes2, returnsRes] = await Promise.all([
         axios.get(`${API_BASE_URL}/api/wages/workers`, { headers }),
         axios.get(`${API_BASE_URL}/api/wages/payments`, { headers }),
         axios.get(`${API_BASE_URL}/api/rawmaterials`, { headers }),
-        axios.get(`${API_BASE_URL}/api/production`, { headers })
+        axios.get(`${API_BASE_URL}/api/production`, { headers }),
+        axios.get(`${API_BASE_URL}/api/sales-returns`, { headers })
       ])
+      setSalesReturns(returnsRes.data || [])
       await axios.get(`${API_BASE_URL}/api/articles`, { headers })
       setInventory(prodRes.data || [])
       setCustomers(custRes.data || [])
@@ -422,7 +430,12 @@ export default function App() {
 
   const totalInventoryValue = stockTotals.totalValuePunjab
   const totalExpenses = expenses.reduce((acc, ex) => acc + Number(ex.amount || 0), 0)
-  const totalSalesRevenue = sales.reduce((acc, s) => acc + Number(s.total || 0), 0)
+  // Sales returns come off revenue and off each customer's balance
+  const totalReturnsValue = salesReturns.reduce((acc, r) => acc + numberOrZero(r.total), 0)
+  const returnsTotalFor = customer => salesReturns
+    .filter(r => r.customerId === customer.phone)
+    .reduce((acc, r) => acc + numberOrZero(r.total), 0)
+  const totalSalesRevenue = sales.reduce((acc, s) => acc + Number(s.total || 0), 0) - totalReturnsValue
   const totalPaymentsReceived = payments.reduce((acc, p) => acc + Number(p.amount || 0), 0)
 
   const totalWages = wagePayments.reduce((acc, w) => acc + Number(w.amount || 0), 0)
@@ -456,7 +469,7 @@ export default function App() {
     const customerPayments = payments.filter(p => p.customerId === c.phone || p.customer === c.name)
     const totalBilled = customerBills.reduce((bAcc, b) => bAcc + numberOrZero(b.total), 0)
     const totalPaid = customerPayments.reduce((pAcc, p) => pAcc + numberOrZero(p.amount), 0)
-    return acc + (numberOrZero(c.balance) + totalBilled - totalPaid)
+    return acc + (numberOrZero(c.balance) + totalBilled - totalPaid - returnsTotalFor(c))
   }, 0)
 
   const handleAddInventory = async (e) => {
@@ -1356,11 +1369,28 @@ export default function App() {
     const paymentEntries = payments
       .filter(p => p.customerId === customer.phone || p.customer === customer.name)
       .map(p => ({ key: `p-${p.id}`, kind: 'payment', date: dayOf(p.date), at: p.date, sortId: p.id, debit: 0, credit: numberOrZero(p.amount) }))
+    const returnEntries = salesReturns
+      .filter(r => r.customerId === customer.phone)
+      .map(r => ({
+        key: `r-${r.id}`,
+        kind: 'return',
+        date: dayOf(r.date),
+        sortId: r.id,
+        returnId: r.id,
+        saleId: r.saleId,
+        billNo: sales.find(s => s.id === r.saleId)?.billNo || '',
+        pairs: (r.items || []).reduce((acc, i) => acc + numberOrZero(i.pairs), 0),
+        items: r.items || [],
+        reason: r.reason || '',
+        debit: 0,
+        credit: numberOrZero(r.total)
+      }))
 
-    // Same day: bills first, then payments, each in the order they were entered
-    const allEntries = [...billEntries, ...paymentEntries].sort((a, b) =>
+    // Same day: bills first, then returns, then payments, each in the order they were entered
+    const kindOrder = { bill: 0, return: 1, payment: 2 }
+    const allEntries = [...billEntries, ...returnEntries, ...paymentEntries].sort((a, b) =>
       a.date.localeCompare(b.date) ||
-      (a.kind === b.kind ? a.sortId - b.sortId : (a.kind === 'bill' ? -1 : 1)))
+      (a.kind === b.kind ? a.sortId - b.sortId : kindOrder[a.kind] - kindOrder[b.kind]))
 
     let balance = numberOrZero(customer.balance)
     allEntries.filter(e => e.date < from).forEach(e => { balance += e.debit - e.credit })
@@ -1379,7 +1409,32 @@ export default function App() {
       closingBalance: balance,
       totalBilled: entries.reduce((acc, e) => acc + e.debit, 0),
       totalPaid: entries.reduce((acc, e) => acc + e.credit, 0),
+      totalReturned: entries.filter(e => e.kind === 'return').reduce((acc, e) => acc + e.credit, 0),
       netDue: allEntries.reduce((acc, e) => acc + e.debit - e.credit, numberOrZero(customer.balance))
+    }
+  }
+
+  // Sales return against a bill: the server puts pairs back in stock; balances here subtract it
+  const handleSaveReturn = async payload => {
+    let saved
+    try {
+      saved = (await axios.post(`${API_BASE_URL}/api/sales-returns`, payload, { headers: authHeaders() })).data
+    } catch (err) {
+      throw new Error(err.response?.data?.message || `Failed to save the return (HTTP ${err.response?.status || 'network'}).`, { cause: err })
+    }
+    const sale = returningSale
+    setReturningSale(null)
+    await fetchAllData()
+    if (window.confirm(`Return saved: Rs. ${numberOrZero(saved.total).toLocaleString()} credited to ${saved.customer}. Print the return slip?`)) printReturnSlip(saved, sale)
+  }
+
+  // Admin only (the API also enforces this): undoes a mistaken return, pairs leave stock again
+  const handleDeleteReturn = async returnId => {
+    try {
+      await axios.delete(`${API_BASE_URL}/api/sales-returns/${returnId}`, { headers: authHeaders() })
+      await fetchAllData()
+    } catch (err) {
+      throw new Error(err.response?.data?.message || 'Failed to delete the return.', { cause: err })
     }
   }
 
@@ -1399,7 +1454,9 @@ export default function App() {
 
   const describeLedgerEntry = e => e.kind === 'bill'
     ? `بل نمبر (Bill No): ${e.billNo || '—'} | Invoice: ${e.invoiceNo} | ${formatPairs(e.pairs)} جوڑے | ٹرانسپورٹ: ${e.transportCompany}, بلٹی: ${e.builtyNo}`
-    : 'نقد وصولی (Cash Payment)'
+    : e.kind === 'return'
+      ? `واپسی (Sales Return #${e.returnId}) | بل نمبر ${e.billNo || '—'} | ${formatPairs(e.pairs)} جوڑے`
+      : 'نقد وصولی (Cash Payment)'
 
   const handlePrintCustomerReport = (customer, ledger) => {
     const printWindow = window.open('', '_blank', 'width=800,height=600');
@@ -1507,7 +1564,9 @@ export default function App() {
     const ledgerSummary = ledger.entries.length > 0
       ? ledger.entries.map(e => e.kind === 'bill'
           ? `• ${e.date} | بل نمبر ${e.billNo || '—'}: + Rs. ${e.debit.toLocaleString()} → ${formatLedgerBalance(e.balance)}`
-          : `• ${e.date} | وصولی: - Rs. ${e.credit.toLocaleString()} → ${formatLedgerBalance(e.balance)}`).join('\n')
+          : e.kind === 'return'
+            ? `• ${e.date} | واپسی (Return): - Rs. ${e.credit.toLocaleString()} → ${formatLedgerBalance(e.balance)}`
+            : `• ${e.date} | وصولی: - Rs. ${e.credit.toLocaleString()} → ${formatLedgerBalance(e.balance)}`).join('\n')
       : '• اس مدت میں کوئی لین دین نہیں';
 
     const message = `*PLUS EVR ERP - گاہک کا کھاتہ* 📒\n` +
@@ -1685,6 +1744,7 @@ export default function App() {
     { id: 'rawmaterials', label: '🧱 Raw Materials' },
     { id: 'entry', label: '📥 Material Entry' },
     { id: 'reports', label: '📊 گاہک کی رپورٹ (Reports)' },
+    { id: 'suppliers', label: '🚚 Suppliers' },
     { id: 'expenses', label: 'Expenses' },
     { id: 'wages', label: 'Daily Wages' },
     { id: 'balancesheet', label: 'Balance Sheet' }
@@ -2161,6 +2221,8 @@ export default function App() {
             onDeletePayment={handleDeletePayment}
             canEditBills={role === 'Admin'}
             onEditBill={setEditingBill}
+            canDeleteReturns={role === 'Admin'}
+            onDeleteReturn={handleDeleteReturn}
           />
         )}
 
@@ -2207,7 +2269,9 @@ export default function App() {
                     const totalBilled = customerBills.reduce((acc, b) => acc + b.total, 0);
                     const totalPaid = customerPayments.reduce((acc, p) => acc + p.amount, 0);
 
-                    const remainingBalance = Number(c.balance) + totalBilled - totalPaid;
+                    const totalReturned = returnsTotalFor(c);
+
+                    const remainingBalance = Number(c.balance) + totalBilled - totalPaid - totalReturned;
                     const isAdvance = remainingBalance < 0;
                     const typedAmount = paymentInputs[c.id] || '';
 
@@ -2245,7 +2309,10 @@ export default function App() {
                           </div>
                         </td>
                         <td style={{ padding: '14px', color: '#475569', fontWeight: '600' }}>{c.region || 'Punjab'}</td>
-                        <td style={{ padding: '14px', color: '#1e293b', fontWeight: '600' }}>Rs. {totalBilled.toLocaleString()}</td>
+                        <td style={{ padding: '14px', color: '#1e293b', fontWeight: '600' }}>
+                          Rs. {totalBilled.toLocaleString()}
+                          {totalReturned > 0 && <div style={{ color: '#b45309', fontSize: '12px', fontWeight: '600' }}>↩️ Returns: − Rs. {totalReturned.toLocaleString()}</div>}
+                        </td>
                         <td style={{ padding: '14px', color: '#16a34a', fontWeight: '600' }}>Rs. {totalPaid.toLocaleString()}</td>
                         <td style={{ padding: '14px', backgroundColor: '#faf5f8', fontWeight: '800', color: isAdvance ? '#0284c7' : '#dc2626', fontSize: '15px' }}>
                           {isAdvance ? `Adv: Rs. ${Math.abs(remainingBalance).toLocaleString()}` : `Rs. ${remainingBalance.toLocaleString()}`}
@@ -2728,6 +2795,10 @@ export default function App() {
                         <td style={{ padding: '14px', color: '#16a34a', fontWeight: '700' }}>
                           Rs. {(s.discount > 0 ? s.total : (s.rawTotal || s.total)).toLocaleString()}
                           {s.discount > 0 && <div style={{ color: '#dc2626', fontSize: '12px', marginTop: '3px' }}>Discount: Rs. {s.discount.toLocaleString()}</div>}
+                          {(() => {
+                            const returned = salesReturns.filter(r => r.saleId === s.id).reduce((acc, r) => acc + numberOrZero(r.total), 0)
+                            return returned > 0 && <div style={{ color: '#b45309', fontSize: '12px', marginTop: '3px' }}>↩️ Returned: Rs. {returned.toLocaleString()}</div>
+                          })()}
                         </td>
                         <td style={{ padding: '14px', textAlign: 'center' }}>
                           <div style={{ display: 'flex', gap: '6px', justifyContent: 'center', flexWrap: 'wrap' }}>
@@ -2746,6 +2817,12 @@ export default function App() {
                                 ✏️ Edit Bill
                               </button>
                             )}
+                            <button
+                              onClick={() => setReturningSale(s)}
+                              style={{ backgroundColor: '#b45309', color: '#fff', border: 'none', padding: '6px 10px', borderRadius: '6px', cursor: 'pointer', fontWeight: '600', fontSize: '12px' }}
+                            >
+                              ↩️ Return
+                            </button>
                             <button
                               onClick={() => handlePrintBill(s)}
                               style={{ backgroundColor: '#2563eb', color: '#fff', border: 'none', padding: '6px 10px', borderRadius: '6px', cursor: 'pointer', fontWeight: '600', fontSize: '12px' }}
@@ -2894,6 +2971,12 @@ export default function App() {
                 </tbody>
               </table>
             </div>
+
+            <RecipesPanel
+              token={token}
+              rawMaterials={rawMaterials}
+              articles={[...new Set([...Object.keys(inventoryByArticle), ...productionRecords.map(p => p.articleNumber)])].filter(Boolean).sort()}
+            />
 
             <DeductionUsagePanel token={token} production={productionRecords} rawMaterials={rawMaterials} />
 
@@ -3189,7 +3272,19 @@ export default function App() {
           </div>
         )}
 
+        {currentTab === 'suppliers' && <SuppliersPage token={token} isAdmin={role === 'Admin'} />}
+
         {currentTab === 'users' && <UsersPage token={token} currentUser={username} tabs={tabs} />}
+
+        {returningSale && (
+          <ReturnModal
+            key={returningSale.id}
+            sale={returningSale}
+            returns={salesReturns.filter(r => r.saleId === returningSale.id)}
+            onSave={handleSaveReturn}
+            onClose={() => setReturningSale(null)}
+          />
+        )}
 
         {currentTab === 'audit' && <AuditPage token={token} />}
 

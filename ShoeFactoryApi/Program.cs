@@ -147,6 +147,9 @@ app.MapGet("/api/backup/download", async (FactoryDbContext db) =>
         BomEntries = await db.BomEntries.AsNoTracking().ToListAsync(),
         MaterialEntries = await db.MaterialEntries.AsNoTracking().ToListAsync(),
         MaterialCounts = await db.MaterialCounts.AsNoTracking().ToListAsync(),
+        Suppliers = await db.Suppliers.AsNoTracking().ToListAsync(),
+        SupplierPayments = await db.SupplierPayments.AsNoTracking().ToListAsync(),
+        SalesReturns = await db.SalesReturns.AsNoTracking().ToListAsync(),
         AuditLogs = await db.AuditLogs.AsNoTracking().OrderBy(a => a.Id).ToListAsync()
     };
 

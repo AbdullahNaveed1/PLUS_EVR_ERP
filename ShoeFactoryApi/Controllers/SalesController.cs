@@ -56,6 +56,9 @@ namespace ShoeFactoryApi.Controllers
         {
             var sale = await _context.Sales.FindAsync(id);
             if (sale == null) return NotFound();
+            // Returns point at this bill's lines; changing or removing the bill would count their stock twice
+            if (await _context.SalesReturns.AnyAsync(r => r.SaleId == id))
+                return BadRequest(new { message = "This bill has returns. Delete its returns first, then change the bill." });
 
             var pairsBefore = PairsByProduct(sale.LineItemsJson);
             if (!ApplyPayloadAndRecalculate(sale, payload, out var error))
@@ -109,6 +112,9 @@ namespace ShoeFactoryApi.Controllers
         {
             var sale = await _context.Sales.FindAsync(id);
             if (sale == null) return NotFound();
+            // Returns point at this bill's lines; changing or removing the bill would count their stock twice
+            if (await _context.SalesReturns.AnyAsync(r => r.SaleId == id))
+                return BadRequest(new { message = "This bill has returns. Delete its returns first, then change the bill." });
             // Deleting a bill puts its pairs back into stock
             await MoveStock(PairsByProduct(sale.LineItemsJson), null);
             _context.Sales.Remove(sale);

@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import { MATERIALS, findMaterial } from './materials'
-import { computeAmount, toPayload, validateEntry } from './entryLogic'
+import { computeAmount, findRawMaterial, toPayload, validateEntry } from './entryLogic'
 import { dash, downloadCsv, formatDate, formatMoney, formatNumber, todayISO } from './format'
 
 const PAGE_SIZE = 25
@@ -47,7 +47,7 @@ const toDraft = e => ({
   enteredBy: e.enteredBy || ''
 })
 
-export default function EntryTable({ entries, suppliers, onUpdate, onVoid, onRestore }) {
+export default function EntryTable({ entries, suppliers, rawMaterials = [], onUpdate, onVoid, onRestore }) {
   const [search, setSearch] = useState('')
   const [fromDate, setFromDate] = useState('')
   const [toDate, setToDate] = useState('')
@@ -137,11 +137,11 @@ export default function EntryTable({ entries, suppliers, onUpdate, onVoid, onRes
   }
 
   const saveEdit = async () => {
-    const found = validateEntry(draft)
+    const found = validateEntry(draft, rawMaterials)
     setDraftErrors(found)
     if (Object.keys(found).length > 0) return
     try {
-      await onUpdate(editingId, toPayload(draft))
+      await onUpdate(editingId, toPayload(draft, rawMaterials))
       cancelEdit()
     } catch (err) {
       setEditError(err.message || 'Could not save changes.')
@@ -174,9 +174,9 @@ export default function EntryTable({ entries, suppliers, onUpdate, onVoid, onRes
       <tr key={editingId} className="em-editing">
         <td data-label="Date">{input('date', { type: 'date' })}</td>
         <td data-label="Material">
-          <select value={draft.material} onChange={e => setDraftField('material', e.target.value)} aria-invalid={!!draftErrors.material}>
-            {!findMaterial(draft.material) && <option value={draft.material}>{draft.material}</option>}
-            {MATERIALS.map(m => <option key={m.name} value={m.name}>{m.name}</option>)}
+          <select value={draft.material} onChange={e => { setDraftField('material', e.target.value); setDraftField('unit', findRawMaterial(rawMaterials, e.target.value)?.unit || draft.unit) }} aria-invalid={!!draftErrors.material}>
+            {!findRawMaterial(rawMaterials, draft.material) && <option value={draft.material}>{draft.material}</option>}
+            {rawMaterials.map(m => <option key={m.id} value={m.name}>{m.name}</option>)}
           </select>
         </td>
         <td data-label="Qty">{input('quantity', { type: 'number', min: '0', step: 'any', inputMode: 'decimal' })}</td>

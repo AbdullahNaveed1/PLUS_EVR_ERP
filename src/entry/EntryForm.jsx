@@ -1,6 +1,5 @@
 import { useRef, useState } from 'react'
-import { MATERIALS, UNITS, findMaterial } from './materials'
-import { computeAmount, toPayload, validateEntry } from './entryLogic'
+import { computeAmount, findRawMaterial, toPayload, validateEntry } from './entryLogic'
 import { formatNumber, todayISO } from './format'
 
 const emptyForm = enteredBy => ({
@@ -11,6 +10,7 @@ const emptyForm = enteredBy => ({
   articleNo: '',
   size: '',
   supplier: '',
+  supplierId: '',
   billNo: '',
   rate: '',
   amount: '',
@@ -20,7 +20,7 @@ const emptyForm = enteredBy => ({
 
 const Optional = () => <span className="em-optional">optional</span>
 
-export default function EntryForm({ username, suppliers, onSave }) {
+export default function EntryForm({ username, rawMaterials, supplierList, onSave }) {
   const [form, setForm] = useState(() => emptyForm(username))
   const [errors, setErrors] = useState({})
   const [saveError, setSaveError] = useState('')
@@ -35,9 +35,9 @@ export default function EntryForm({ username, suppliers, onSave }) {
     if (errors[field]) setErrors(prev => ({ ...prev, [field]: undefined }))
   }
 
-  // Picking a material fills in its default unit (still editable afterwards)
+  // Picking a material fills in its unit from the Raw Materials tab
   const handleMaterialChange = value => {
-    const match = findMaterial(value)
+    const match = findRawMaterial(rawMaterials, value)
     setForm(prev => ({ ...prev, material: value, unit: match ? match.unit : prev.unit }))
     if (errors.material || errors.unit) setErrors(prev => ({ ...prev, material: undefined, unit: undefined }))
   }
@@ -48,7 +48,7 @@ export default function EntryForm({ username, suppliers, onSave }) {
   const handleSubmit = async e => {
     e.preventDefault()
     if (saving) return
-    const found = validateEntry(form)
+    const found = validateEntry(form, rawMaterials)
     setErrors(found)
     setSaveError('')
     const firstInvalid = ['date', 'material', 'quantity', 'unit'].find(f => found[f])
@@ -59,13 +59,14 @@ export default function EntryForm({ username, suppliers, onSave }) {
 
     setSaving(true)
     try {
-      await onSave(toPayload(form))
+      await onSave(toPayload(form, rawMaterials))
       // Keep date, supplier, material and unit for fast repeated entry; clear the rest
       setForm(prev => ({
         ...emptyForm(prev.enteredBy),
         date: prev.date,
         supplier: prev.supplier,
-        material: findMaterial(prev.material)?.name || prev.material,
+        supplierId: prev.supplierId,
+        material: findRawMaterial(rawMaterials, prev.material)?.name || prev.material,
         unit: prev.unit
       }))
       quantityRef.current?.focus()
@@ -117,8 +118,12 @@ export default function EntryForm({ username, suppliers, onSave }) {
             autoComplete="off"
           />
           <datalist id="em-material-list">
-            {MATERIALS.map(m => <option key={m.name} value={m.name} />)}
+            {rawMaterials.map(m => <option key={m.id} value={m.name} />)}
           </datalist>
+          {(() => {
+            const match = findRawMaterial(rawMaterials, form.material)
+            return match ? <span className="em-hint">In stock: {formatNumber(Number(match.stockQty) || 0)} {match.unit}</span> : null
+          })()}
           {errors.material && <span className="em-error">{errors.material}</span>}
         </label>
 
@@ -142,16 +147,12 @@ export default function EntryForm({ username, suppliers, onSave }) {
           <span className="em-label">Unit</span>
           <input
             ref={unitRef}
-            list="em-unit-list"
-            placeholder="pcs / kg / pairs"
+            placeholder="From the material"
             value={form.unit}
-            onChange={e => set('unit', e.target.value)}
+            readOnly
+            className="em-readonly"
             aria-invalid={!!errors.unit}
-            autoComplete="off"
           />
-          <datalist id="em-unit-list">
-            {UNITS.map(u => <option key={u} value={u} />)}
-          </datalist>
           {errors.unit && <span className="em-error">{errors.unit}</span>}
         </label>
 
@@ -166,18 +167,18 @@ export default function EntryForm({ username, suppliers, onSave }) {
         </label>
 
         <label className="em-field">
-          <span className="em-label">Supplier / Party <Optional /></span>
-          <input
-            type="text"
-            list="em-supplier-list"
-            placeholder="Supplier name"
-            value={form.supplier}
-            onChange={e => set('supplier', e.target.value)}
-            autoComplete="off"
-          />
-          <datalist id="em-supplier-list">
-            {suppliers.map(s => <option key={s} value={s} />)}
-          </datalist>
+          <span className="em-label">Supplier <Optional /></span>
+          <select
+            value={form.supplierId}
+            onChange={e => {
+              const picked = supplierList.find(s => String(s.id) === e.target.value)
+              setForm(prev => ({ ...prev, supplierId: e.target.value, supplier: picked?.name || '' }))
+            }}
+          >
+            <option value="">— No supplier —</option>
+            {supplierList.map(s => <option key={s.id} value={String(s.id)}>{s.name}</option>)}
+          </select>
+          <span className="em-hint">The amount goes into this supplier's khata. Add suppliers on the Suppliers tab.</span>
         </label>
 
         <label className="em-field">

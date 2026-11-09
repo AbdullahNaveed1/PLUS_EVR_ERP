@@ -28,7 +28,7 @@ const timeOf = value => {
   return Number.isNaN(d.getTime()) ? '' : d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })
 }
 
-export default function CustomerHistory({ customer, ledger, sales, invoiceNumber, onBack, canDeletePayments, onDeletePayment, canEditBills, onEditBill }) {
+export default function CustomerHistory({ customer, ledger, sales, invoiceNumber, onBack, canDeletePayments, onDeletePayment, canEditBills, onEditBill, canDeleteReturns, onDeleteReturn }) {
   const [confirmPayment, setConfirmPayment] = useState(null)
   const [deleting, setDeleting] = useState(false)
   const [deleteError, setDeleteError] = useState('')
@@ -52,13 +52,24 @@ export default function CustomerHistory({ customer, ledger, sales, invoiceNumber
   const saleById = new Map(sales.map(s => [s.id, s]))
   const bills = ledger.entries.filter(e => e.kind === 'bill')
   const payments = ledger.entries.filter(e => e.kind === 'payment')
+  const returns = ledger.entries.filter(e => e.kind === 'return')
+
+  const deleteReturn = async e => {
+    if (!window.confirm(`Delete return #${e.returnId} (${rs(e.credit)})? The pairs leave stock again and the customer owes this amount again.`)) return
+    try {
+      await onDeleteReturn(e.returnId)
+    } catch (err) {
+      window.alert(err.message)
+    }
+  }
   const billSales = bills.map(b => saleById.get(b.sortId)).filter(Boolean)
 
   const totals = {
     gross: billSales.reduce((acc, s) => acc + (Number(s.rawTotal) || Number(s.total) || 0), 0),
     discount: billSales.reduce((acc, s) => acc + (Number(s.discount) || 0), 0),
     billed: ledger.totalBilled,
-    paid: ledger.totalPaid,
+    paid: payments.reduce((acc, e) => acc + e.credit, 0),
+    returned: returns.reduce((acc, e) => acc + e.credit, 0),
     pairs: bills.reduce((acc, b) => acc + (Number(b.pairs) || 0), 0)
   }
   const firstDate = ledger.entries[0]?.date
@@ -66,6 +77,9 @@ export default function CustomerHistory({ customer, ledger, sales, invoiceNumber
 
   const handlePrint = () => {
     const rows = ledger.entries.map(e => {
+      if (e.kind === 'return') {
+        return `<tr><td>${formatDate(e.date)}</td><td>Sales return #${e.returnId} against Bill No ${escapeHtml(e.billNo || '—')} · ${formatNumber(e.pairs)} pairs${e.reason ? ` · ${escapeHtml(e.reason)}` : ''}</td><td></td><td class="num">${rs(e.credit)}</td><td class="num">${balanceText(e.balance)}</td></tr>`
+      }
       if (e.kind === 'payment') {
         return `<tr><td>${formatDate(e.date)}</td><td>Cash payment received</td><td></td><td class="num">${rs(e.credit)}</td><td class="num">${balanceText(e.balance)}</td></tr>`
       }
@@ -111,6 +125,7 @@ export default function CustomerHistory({ customer, ledger, sales, invoiceNumber
           <span>Discounts: <strong>${rs(totals.discount)}</strong></span>
           <span>Payments: <strong>${payments.length}</strong></span>
           <span>Total paid: <strong>${rs(totals.paid)}</strong></span>
+          ${returns.length ? `<span>Returns: <strong>${returns.length}</strong> (${rs(totals.returned)})</span>` : ''}
           <span>Current balance: <strong>${balanceText(ledger.closingBalance)}</strong></span>
         </div>
         <table>
@@ -118,7 +133,7 @@ export default function CustomerHistory({ customer, ledger, sales, invoiceNumber
           <tbody>
             <tr><td></td><td><strong>Opening balance</strong></td><td></td><td></td><td class="num"><strong>${balanceText(ledger.openingBalance)}</strong></td></tr>
             ${rows || '<tr><td colspan="5" class="muted">No bills or payments yet.</td></tr>'}
-            <tr><td></td><td><strong>Current balance</strong></td><td class="num"><strong>${rs(totals.billed)}</strong></td><td class="num"><strong>${rs(totals.paid)}</strong></td><td class="num"><strong>${balanceText(ledger.closingBalance)}</strong></td></tr>
+            <tr><td></td><td><strong>Current balance</strong></td><td class="num"><strong>${rs(totals.billed)}</strong></td><td class="num"><strong>${rs(totals.paid + totals.returned)}</strong></td><td class="num"><strong>${balanceText(ledger.closingBalance)}</strong></td></tr>
           </tbody>
         </table>
         <script>window.onload = function () { window.print() }</script>
@@ -150,6 +165,7 @@ export default function CustomerHistory({ customer, ledger, sales, invoiceNumber
           <div><span>Pairs billed</span><strong>{formatNumber(totals.pairs)}</strong></div>
           <div><span>Discounts given</span><strong>{rs(totals.discount)}</strong></div>
           <div><span>Payments ({payments.length})</span><strong>{rs(totals.paid)}</strong></div>
+          {returns.length > 0 && <div><span>Returns ({returns.length})</span><strong>{rs(totals.returned)}</strong></div>}
           <div className={ledger.closingBalance < 0 ? 'em-good' : 'em-due'}><span>Current balance</span><strong>{balanceText(ledger.closingBalance)}</strong></div>
         </div>
       </div>
@@ -178,6 +194,28 @@ export default function CustomerHistory({ customer, ledger, sales, invoiceNumber
                 <tr className="em-empty-row"><td colSpan={5}>No bills or payments for this customer yet.</td></tr>
               )}
               {ledger.entries.map(e => {
+                if (e.kind === 'return') {
+                  return (
+                    <tr key={e.key}>
+                      <td data-label="Date">{formatDate(e.date)}</td>
+                      <td data-label="Detail">
+                        <div className="em-detail-actions">
+                          <span>
+                            ↩️ Sales return #{e.returnId} against Bill No {e.billNo || '—'} · {formatNumber(e.pairs)} pairs
+                            {e.reason && <span className="em-hint"> · {e.reason}</span>}
+                            <div className="em-hint">{e.items.map(i => `${i.model} size ${i.size}: ${formatNumber(i.pairs)}`).join(' · ')}</div>
+                          </span>
+                          {canDeleteReturns && (
+                            <button type="button" className="em-btn em-btn-danger em-btn-sm" onClick={() => deleteReturn(e)}>Delete</button>
+                          )}
+                        </div>
+                      </td>
+                      <td data-label="Bill" className="em-num">—</td>
+                      <td data-label="Paid" className="em-num em-paid"><strong>{rs(e.credit)}</strong></td>
+                      <td data-label="Balance" className="em-num"><strong>{balanceText(e.balance)}</strong></td>
+                    </tr>
+                  )
+                }
                 if (e.kind === 'payment') {
                   return (
                     <tr key={e.key}>
@@ -258,7 +296,7 @@ export default function CustomerHistory({ customer, ledger, sales, invoiceNumber
                 <td data-label="Date">Today</td>
                 <td data-label="Detail"><strong>Current balance</strong></td>
                 <td data-label="Bill" className="em-num"><strong>{rs(totals.billed)}</strong></td>
-                <td data-label="Paid" className="em-num"><strong>{rs(totals.paid)}</strong></td>
+                <td data-label="Paid" className="em-num"><strong>{rs(totals.paid + totals.returned)}</strong></td>
                 <td data-label="Balance" className="em-num"><strong>{balanceText(ledger.closingBalance)}</strong></td>
               </tr>
             </tbody>

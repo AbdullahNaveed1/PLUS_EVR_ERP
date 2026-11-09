@@ -27,6 +27,12 @@ namespace ShoeFactoryApi.Models
         // For "used" rows: the Raw Materials tab item whose Stock Qty this deduction lowered
         public int? RawMaterialId { get; set; }
 
+        // For "received" rows: the supplier whose khata this purchase goes into
+        public int? SupplierId { get; set; }
+
+        // Set on deductions made automatically from a production entry's recipe
+        public int? ProductionRecordId { get; set; }
+
         [Required]
         [MaxLength(30)]
         public string Unit { get; set; } = string.Empty;
