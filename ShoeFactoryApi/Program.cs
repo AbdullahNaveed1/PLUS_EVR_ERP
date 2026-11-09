@@ -73,6 +73,9 @@ builder.Services.AddCors(options =>
 // FIX #24 — register the inventory service (was referenced but not registered here)
 builder.Services.AddScoped<IInventoryService, InventoryService>();
 
+// Nightly backup email; stays off until BACKUP_EMAIL_TO / SMTP_USER / SMTP_PASSWORD are set
+builder.Services.AddHostedService<BackupEmailService>();
+
 var app = builder.Build();
 
 // FIX #16 + #17 — Migrate instead of EnsureCreated; seed admin only once
@@ -123,40 +126,7 @@ app.UseAuthentication();
 app.UseAuthorization();
 app.MapControllers();
 
-// FIX #18 — backup includes every table; restricted to Admin since it exports all business data
-app.MapGet("/api/backup/download", async (FactoryDbContext db) =>
-{
-    var snapshot = new
-    {
-        ExportedAt = DateTime.UtcNow,
-        Products = await db.Products.AsNoTracking().ToListAsync(),
-        Articles = await db.Articles.AsNoTracking().ToListAsync(),
-        ProductPriceHistories = await db.ProductPriceHistories.AsNoTracking().ToListAsync(),
-        Customers = await db.Customers.AsNoTracking().ToListAsync(),
-        Sales = await db.Sales.AsNoTracking().ToListAsync(),
-        Expenses = await db.Expenses.AsNoTracking().ToListAsync(),
-        Payments = await db.Payments.AsNoTracking().ToListAsync(),
-        Workers = await db.Workers.AsNoTracking().ToListAsync(),
-        WagePayments = await db.WagePayments.AsNoTracking().ToListAsync(),
-
-        // ===== NEW =====
-        RawMaterials = await db.RawMaterials.AsNoTracking().ToListAsync(),
-        // SizesJson is hidden from normal API output, so the backup lists it explicitly
-        ProductionRecords = (await db.ProductionRecords.AsNoTracking().ToListAsync())
-            .Select(p => new { p.Id, p.Date, p.ArticleNumber, p.Dozens, p.Pairs, p.Notes, p.CreatedAt, p.SizesJson }),
-        BomEntries = await db.BomEntries.AsNoTracking().ToListAsync(),
-        MaterialEntries = await db.MaterialEntries.AsNoTracking().ToListAsync(),
-        MaterialCounts = await db.MaterialCounts.AsNoTracking().ToListAsync(),
-        Suppliers = await db.Suppliers.AsNoTracking().ToListAsync(),
-        SupplierPayments = await db.SupplierPayments.AsNoTracking().ToListAsync(),
-        SalesReturns = await db.SalesReturns.AsNoTracking().ToListAsync(),
-        AuditLogs = await db.AuditLogs.AsNoTracking().OrderBy(a => a.Id).ToListAsync()
-    };
-
-    var json = JsonSerializer.Serialize(snapshot, new JsonSerializerOptions { WriteIndented = true });
-    var bytes = Encoding.UTF8.GetBytes(json);
-    return Results.File(bytes, "application/json", $"plus-evr-erp-backup-{DateTime.UtcNow:yyyy-MM-dd}.json");
-}).RequireAuthorization(policy => policy.RequireRole("Admin"));
+// Backups (download, email now, status) are in BackupController, Admin only
 
 app.MapFallbackToFile("index.html");
 app.Run();

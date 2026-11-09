@@ -202,7 +202,7 @@ namespace ShoeFactoryApi.Controllers
             return true;
         }
 
-        private static decimal GetDecimal(JsonElement el, string name)
+        internal static decimal GetDecimal(JsonElement el, string name)
         {
             if (!el.TryGetProperty(name, out var v)) return 0m;
             if (v.ValueKind == JsonValueKind.Number && v.TryGetDecimal(out var d)) return d;
@@ -211,7 +211,7 @@ namespace ShoeFactoryApi.Controllers
         }
 
         // Product id sent as text or a number; older bills only carry it as "[Article No: 12]" in the description
-        private static string? ProductIdOf(JsonElement item)
+        internal static string? ProductIdOf(JsonElement item)
         {
             if (item.TryGetProperty("productId", out var v))
             {

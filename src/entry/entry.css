@@ -415,3 +415,10 @@ th.em-num .em-sort { justify-content: flex-end; }
 .em-audit-muted { background: #f1f5f9; color: #475569; }
 .em-audit-summary { display: flex; align-items: center; justify-content: space-between; gap: 10px; font-size: 13px; overflow-wrap: anywhere; }
 .em-audit-json { margin: 0; padding: 12px; max-height: 320px; overflow: auto; background: #0f172a; color: #e2e8f0; border-radius: 8px; font-size: 12px; white-space: pre-wrap; overflow-wrap: anywhere; }
+
+/* ---------- Profit & loss ---------- */
+.em-banner-warn { background: #fffbeb; border: 1px solid #fde68a; color: #92400e; }
+.em-table.em-pl { min-width: 0; }
+.em-table.em-pl td:first-child { width: 70%; }
+.em-pl-total td { font-weight: 700; background: #f8fafc; }
+.em-pl-result td { font-weight: 800; font-size: 16px; background: #faf5f8; }

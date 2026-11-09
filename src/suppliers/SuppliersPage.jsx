@@ -11,6 +11,32 @@ const rs = value => `Rs. ${formatNumber(Number(value) || 0)}`
 const owed = value => (value < 0 ? `Advance ${rs(Math.abs(value))}` : rs(value))
 const errorText = err => err?.response?.data?.message || (err?.response ? `Server error (HTTP ${err.response.status})` : 'Could not reach the server.')
 const emptySupplier = () => ({ name: '', phone: '', address: '', openingBalance: '', notes: '' })
+const escapeHtml = value => String(value ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]))
+
+// Printable / PDF supplier khata, laid out like the customer statement
+const printLedger = ledger => {
+  const s = ledger.supplier
+  const rows = ledger.entries.map(e => `<tr><td>${formatDate(e.date)}</td><td>${e.kind === 'purchase' ? 'Purchase' : 'Payment'}: ${escapeHtml(e.detail)}</td>
+    <td class="n">${e.purchase ? rs(e.purchase) : ''}</td><td class="n">${e.payment ? rs(e.payment) : ''}</td><td class="n">${owed(e.balance)}</td></tr>`).join('')
+  const win = window.open('', '_blank', 'width=900,height=700')
+  if (!win) return
+  win.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>Supplier Khata - ${escapeHtml(s.name)}</title>
+    <style>body{font-family:Arial,sans-serif;padding:24px;color:#1e293b;font-size:12px}h1{color:#714B67;font-size:20px;margin:0 0 4px}
+    .info{display:flex;flex-wrap:wrap;gap:6px 24px;margin:10px 0}table{width:100%;border-collapse:collapse}
+    th,td{border:1px solid #cbd5e1;padding:6px;text-align:left}th{background:#f1f5f9}.n{text-align:right}.muted{color:#64748b}
+    tr.total td{font-weight:700;background:#faf5f8}@media print{tr{page-break-inside:avoid}}</style></head><body>
+    <h1>PLUS EVR ERP: Supplier Khata</h1>
+    <div class="info"><span><strong>${escapeHtml(s.name)}</strong></span>${s.phone ? `<span>Phone: ${escapeHtml(s.phone)}</span>` : ''}
+      ${s.address ? `<span>${escapeHtml(s.address)}</span>` : ''}<span class="muted">Printed ${formatDate(new Date().toISOString())}</span></div>
+    <div class="info"><span>Opening: <strong>${owed(ledger.openingBalance)}</strong></span><span>Purchases: <strong>${rs(ledger.totalPurchases)}</strong></span>
+      <span>Paid: <strong>${rs(ledger.totalPaid)}</strong></span><span>We owe: <strong>${owed(ledger.balance)}</strong></span></div>
+    <table><thead><tr><th>Date</th><th>Detail</th><th class="n">Purchase</th><th class="n">Paid</th><th class="n">Balance</th></tr></thead><tbody>
+      <tr><td></td><td><strong>Opening balance</strong></td><td></td><td></td><td class="n"><strong>${owed(ledger.openingBalance)}</strong></td></tr>
+      ${rows || '<tr><td colspan="5" class="muted">No purchases or payments yet.</td></tr>'}
+      <tr class="total"><td></td><td>Closing balance</td><td class="n">${rs(ledger.totalPurchases)}</td><td class="n">${rs(ledger.totalPaid)}</td><td class="n">${owed(ledger.balance)}</td></tr>
+    </tbody></table><script>window.onload = function () { window.print() }</script></body></html>`)
+  win.document.close()
+}
 
 export default function SuppliersPage({ token, isAdmin }) {
   const headers = useMemo(() => ({ headers: { Authorization: `Bearer ${token}` } }), [token])
@@ -127,6 +153,7 @@ export default function SuppliersPage({ token, isAdmin }) {
             <h3>📒 {ledger.supplier.name} — Khata</h3>
             <div className="em-head-actions">
               <button type="button" className="em-btn em-btn-ghost em-btn-sm" onClick={() => setLedger(null)}>← All suppliers</button>
+              <button type="button" className="em-btn em-btn-ghost em-btn-sm" onClick={() => printLedger(ledger)}>🖨️ Print / PDF</button>
               <button type="button" className="em-btn em-btn-primary em-btn-sm" onClick={() => setPayFor({ supplier: s, date: todayISO(), amount: '', notes: '' })}>💵 Pay</button>
             </div>
           </div>

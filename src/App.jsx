@@ -12,6 +12,7 @@ import ReturnModal from './sales/ReturnModal'
 import { printReturnSlip } from './sales/returnSlip'
 import EditBillModal from './sales/EditBillModal'
 import UsersPage from './admin/UsersPage'
+import ProfitPage from './reports/ProfitPage'
 import AuditPage from './admin/AuditPage'
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || ''
@@ -1750,6 +1751,7 @@ export default function App() {
     { id: 'balancesheet', label: 'Balance Sheet' }
   ]
   const adminTabs = [
+    { id: 'profit', label: '💰 Profit' },
     { id: 'users', label: '👥 Users' },
     { id: 'audit', label: '🕵️ Audit Log' }
   ]
@@ -3273,6 +3275,8 @@ export default function App() {
         )}
 
         {currentTab === 'suppliers' && <SuppliersPage token={token} isAdmin={role === 'Admin'} />}
+
+        {currentTab === 'profit' && <ProfitPage token={token} />}
 
         {currentTab === 'users' && <UsersPage token={token} currentUser={username} tabs={tabs} />}
 

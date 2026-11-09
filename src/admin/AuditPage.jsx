@@ -1,6 +1,7 @@
 import { Fragment, useEffect, useMemo, useState } from 'react'
 import axios from 'axios'
 import { todayISO } from '../entry/format'
+import BackupPanel from './BackupPanel'
 import '../entry/entry.css'
 
 // Admin page: every add / edit / delete, sign-in and user change, newest first. Read-only.
@@ -13,14 +14,17 @@ const ENTITY_NAMES = {
   Sale: 'Bill', Payment: 'Payment', Customer: 'Customer', Product: 'Stock item', Article: 'Article',
   ProductPriceHistory: 'Price change', ProductionRecord: 'Production', RawMaterial: 'Raw material',
   MaterialEntry: 'Material entry', MaterialCount: 'Material count', Expense: 'Expense', Worker: 'Worker',
-  WagePayment: 'Wage payment', BomEntry: 'Recipe line', User: 'User'
+  WagePayment: 'Wage payment', BomEntry: 'Recipe line', User: 'User', Supplier: 'Supplier',
+  SupplierPayment: 'Supplier payment', SalesReturn: 'Sales return', Backup: 'Backup'
 }
 const ACTIONS = {
   create: { label: 'Added', tone: 'good' },
   update: { label: 'Edited', tone: 'info' },
   delete: { label: 'Deleted', tone: 'bad' },
   login: { label: 'Signed in', tone: 'muted' },
-  login_failed: { label: 'Failed sign-in', tone: 'bad' }
+  login_failed: { label: 'Failed sign-in', tone: 'bad' },
+  backup_emailed: { label: 'Backup emailed', tone: 'good' },
+  backup_failed: { label: 'Backup failed', tone: 'bad' }
 }
 // Internal fields that only add noise to the summary line
 const HIDDEN = new Set(['Id', 'CreatedAt', 'UpdatedAt', 'PasswordHash', 'LineItemsJson', 'SizesJson'])
@@ -40,6 +44,7 @@ const summarize = log => {
   const data = parse(log.changes)
   if (!data) return ''
   if (log.action === 'login' || log.action === 'login_failed') return data.ip ? `from ${data.ip}` : ''
+  if (log.entity === 'Backup') return [data.to && `to ${data.to}`, data.sizeKb && `${data.sizeKb} KB`, data.error].filter(Boolean).join(' · ')
   const fields = Object.entries(data).filter(([k]) => !HIDDEN.has(k))
   if (log.action === 'update') {
     const parts = fields.map(([k, v]) => `${k}: ${show(v?.old)} → ${show(v?.new)}`)
@@ -78,6 +83,8 @@ export default function AuditPage({ token }) {
   return (
     <div className="em-root em-plain">
       <div className="em-title"><h2>🕵️ Audit Log <span className="em-muted">(every change, who and when)</span></h2></div>
+
+      <BackupPanel token={token} />
 
       <div className="em-card">
         <div className="em-filters">
