@@ -395,3 +395,12 @@ th.em-num .em-sort { justify-content: flex-end; }
 .em-eb-amount { margin-top: 8px; text-align: right; font-size: 14px; }
 .em-eb-summary { margin-top: 16px; padding: 12px 14px; border-radius: 10px; background: #f0fdf4; border: 1px solid #bbf7d0; font-size: 15px; }
 .em-eb-stock { margin: 8px 0 0; padding-left: 18px; font-size: 13px; color: #334155; }
+
+/* ---------- Production sizes ---------- */
+.em-ps { grid-column: 1 / -1; display: flex; flex-direction: column; gap: 10px; padding: 12px; border: 1px dashed #cbd5e1; border-radius: 10px; background: #f8fafc; }
+.em-ps-row { display: grid; grid-template-columns: minmax(180px, 2fr) minmax(90px, 1fr) minmax(90px, 1fr) auto; gap: 10px; align-items: end; }
+.em-ps-foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+@media (max-width: 560px) {
+  .em-ps-row { grid-template-columns: 1fr 1fr; }
+  .em-ps-row .em-field:first-child { grid-column: 1 / -1; }
+}

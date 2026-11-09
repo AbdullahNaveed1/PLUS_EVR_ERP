@@ -89,20 +89,25 @@ namespace ShoeFactoryApi.Controllers
             var unit = input.Unit?.Trim();
             if (string.IsNullOrEmpty(unit)) { error = "Unit is required."; return false; }
             if (input.Rate < 0 || input.Amount < 0) { error = "Rate and amount cannot be negative."; return false; }
+            var kind = string.IsNullOrWhiteSpace(input.Kind) ? MaterialEntryKinds.Received : input.Kind.Trim().ToLowerInvariant();
+            if (kind != MaterialEntryKinds.Received && kind != MaterialEntryKinds.Used)
+            { error = "Kind must be 'received' or 'used'."; return false; }
+            var used = kind == MaterialEntryKinds.Used;
 
             entry.Date = input.Date.Value;
             entry.Material = material;
             entry.Quantity = input.Quantity.Value;
+            entry.Kind = kind;
             entry.Unit = unit;
             entry.ArticleNo = Clean(input.ArticleNo);
             entry.Size = Clean(input.Size);
-            entry.Supplier = Clean(input.Supplier);
-            entry.BillNo = Clean(input.BillNo);
+            entry.Supplier = used ? null : Clean(input.Supplier);
+            entry.BillNo = used ? null : Clean(input.BillNo);
             entry.Remarks = Clean(input.Remarks);
             entry.EnteredBy = Clean(input.EnteredBy);
-            entry.Rate = input.Rate;
+            entry.Rate = used ? null : input.Rate;
             // Amount is qty × rate whenever a rate is given; otherwise keep any amount typed directly
-            entry.Amount = input.Rate.HasValue
+            entry.Amount = used ? null : input.Rate.HasValue
                 ? decimal.Round(input.Quantity.Value * input.Rate.Value, 2, MidpointRounding.AwayFromZero)
                 : input.Amount;
             entry.UpdatedAt = DateTime.UtcNow;
@@ -118,6 +123,7 @@ namespace ShoeFactoryApi.Controllers
         public DateOnly? Date { get; set; }
         public string? Material { get; set; }
         public decimal? Quantity { get; set; }
+        public string? Kind { get; set; }
         public string? Unit { get; set; }
         public string? ArticleNo { get; set; }
         public string? Size { get; set; }

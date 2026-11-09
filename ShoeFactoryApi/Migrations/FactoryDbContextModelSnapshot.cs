@@ -202,6 +202,11 @@ namespace ShoeFactoryApi.Migrations
                         .HasMaxLength(100)
                         .HasColumnType("character varying(100)");
 
+                    b.Property<string>("Kind")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)");
+
                     b.Property<string>("Material")
                         .IsRequired()
                         .HasMaxLength(100)
@@ -383,6 +388,10 @@ namespace ShoeFactoryApi.Migrations
                     b.Property<decimal>("Pairs")
                         .HasPrecision(18, 4)
                         .HasColumnType("numeric(18,4)");
+
+                    b.Property<string>("SizesJson")
+                        .IsRequired()
+                        .HasColumnType("text");
 
                     b.HasKey("Id");
 

@@ -140,7 +140,9 @@ app.MapGet("/api/backup/download", async (FactoryDbContext db) =>
 
         // ===== NEW =====
         RawMaterials = await db.RawMaterials.AsNoTracking().ToListAsync(),
-        ProductionRecords = await db.ProductionRecords.AsNoTracking().ToListAsync(),
+        // SizesJson is hidden from normal API output, so the backup lists it explicitly
+        ProductionRecords = (await db.ProductionRecords.AsNoTracking().ToListAsync())
+            .Select(p => new { p.Id, p.Date, p.ArticleNumber, p.Dozens, p.Pairs, p.Notes, p.CreatedAt, p.SizesJson }),
         BomEntries = await db.BomEntries.AsNoTracking().ToListAsync(),
         MaterialEntries = await db.MaterialEntries.AsNoTracking().ToListAsync(),
         MaterialCounts = await db.MaterialCounts.AsNoTracking().ToListAsync()

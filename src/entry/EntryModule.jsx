@@ -1,23 +1,27 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import EntryForm from './EntryForm'
 import EntryTable from './EntryTable'
+import DeductionSection from './DeductionSection'
+import StockSection from './StockSection'
+import { isUsed } from './stock'
 import { createEntryRepository, errorMessage } from './entryRepository'
 import { formatNumber, todayISO } from './format'
 import './entry.css'
 
-// Sections of the stores module. Only Entry is built; the rest are placeholders for later rounds.
+// Sections of the stores module. Reports is a placeholder for a later round.
 const SECTIONS = [
-  { id: 'entry', label: 'Entry', icon: '📥', ready: true },
-  { id: 'issue', label: 'Issue to Production', icon: '🏭', ready: false },
-  { id: 'stock', label: 'Stock', icon: '📦', ready: false },
+  { id: 'entry', label: 'Entry', icon: '📥', ready: true, title: 'Material Entry', subtitle: 'Goods received' },
+  { id: 'issue', label: 'Production Deduction', icon: '➖', ready: true, title: 'Production Deduction', subtitle: 'Material used' },
+  { id: 'stock', label: 'Stock', icon: '📦', ready: true, title: 'Material Stock', subtitle: 'Received − used' },
   { id: 'reports', label: 'Reports', icon: '📊', ready: false }
 ]
 
 const TOAST_MS = 6000
 
-export default function EntryModule({ token, username }) {
+export default function EntryModule({ token, username, initialSection = 'entry' }) {
   const repo = useMemo(() => createEntryRepository(token), [token])
   const [entries, setEntries] = useState([])
+  const [section, setSection] = useState(initialSection)
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState('')
   const [toasts, setToasts] = useState([])
@@ -50,7 +54,7 @@ export default function EntryModule({ token, username }) {
     try {
       const saved = await repo.create(payload)
       setEntries(prev => [saved, ...prev])
-      showToast(`Saved: ${formatNumber(saved.quantity)} ${saved.unit} ${saved.material}`)
+      showToast(`${isUsed(saved) ? 'Deducted' : 'Saved'}: ${formatNumber(saved.quantity)} ${saved.unit} ${saved.material}`)
     } catch (err) {
       throw new Error(errorMessage(err), { cause: err })
     }
@@ -86,7 +90,10 @@ export default function EntryModule({ token, username }) {
     }
   }
 
-  const liveEntries = useMemo(() => entries.filter(e => !e.voided), [entries])
+  // The Entry section lists goods received only; deductions have their own section
+  const receivedEntries = useMemo(() => entries.filter(e => !isUsed(e)), [entries])
+  const liveEntries = useMemo(() => receivedEntries.filter(e => !e.voided), [receivedEntries])
+  const current = SECTIONS.find(s => s.id === section)
 
   const suppliers = useMemo(
     () => [...new Set(liveEntries.map(e => e.supplier).filter(Boolean))].sort((a, b) => a.localeCompare(b)),
@@ -110,9 +117,10 @@ export default function EntryModule({ token, username }) {
           <button
             key={s.id}
             type="button"
-            className={`em-nav ${s.id === 'entry' ? 'em-nav-active' : ''}`}
+            className={`em-nav ${s.id === section ? 'em-nav-active' : ''}`}
             disabled={!s.ready}
-            aria-current={s.id === 'entry' ? 'page' : undefined}
+            onClick={() => setSection(s.id)}
+            aria-current={s.id === section ? 'page' : undefined}
             title={s.ready ? s.label : `${s.label} — coming soon`}
           >
             <span aria-hidden="true">{s.icon}</span>
@@ -124,16 +132,20 @@ export default function EntryModule({ token, username }) {
 
       <div className="em-main">
         <div className="em-title">
-          <h2>Material Entry <span className="em-muted">(Goods received)</span></h2>
+          <h2>{current.title} <span className="em-muted">({current.subtitle})</span></h2>
         </div>
 
-        <div className="em-summary" aria-label="Today's summary">
-          <div><span>Entries today</span><strong>{formatNumber(today.count)}</strong></div>
-          <div><span>Total qty today</span><strong>{formatNumber(today.qty)}</strong></div>
-          <div><span>Materials today</span><strong>{formatNumber(today.materials)}</strong></div>
-        </div>
+        {section === 'entry' && (
+          <>
+            <div className="em-summary" aria-label="Today's summary">
+              <div><span>Entries today</span><strong>{formatNumber(today.count)}</strong></div>
+              <div><span>Total qty today</span><strong>{formatNumber(today.qty)}</strong></div>
+              <div><span>Materials today</span><strong>{formatNumber(today.materials)}</strong></div>
+            </div>
 
-        <EntryForm username={username} suppliers={suppliers} onSave={handleCreate} />
+            <EntryForm username={username} suppliers={suppliers} onSave={handleCreate} />
+          </>
+        )}
 
         {loading ? (
           <div className="em-card em-center">Loading entries…</div>
@@ -142,9 +154,13 @@ export default function EntryModule({ token, username }) {
             {loadError}
             <button type="button" className="em-btn em-btn-ghost em-btn-sm" onClick={retryLoad}>Try again</button>
           </div>
+        ) : section === 'issue' ? (
+          <DeductionSection entries={entries} username={username} onSave={handleCreate} onVoid={handleVoid} onRestore={handleRestore} />
+        ) : section === 'stock' ? (
+          <StockSection entries={entries} />
         ) : (
           <EntryTable
-            entries={entries}
+            entries={receivedEntries}
             suppliers={suppliers}
             onUpdate={handleUpdate}
             onVoid={handleVoid}

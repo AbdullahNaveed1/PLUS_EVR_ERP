@@ -2,6 +2,9 @@ import { useState, useEffect, useMemo, useRef } from 'react'
 import axios from 'axios'
 import EntryModule from './entry/EntryModule'
 import MaterialUsagePanel from './production/MaterialUsagePanel'
+import DeductionUsagePanel from './production/DeductionUsagePanel'
+import ProductionSizes from './production/ProductionSizes'
+import { describeSizes, emptySize, sizeTotals, toSizePayload } from './production/sizeRows'
 import CustomerHistory from './customers/CustomerHistory'
 import EditBillModal from './sales/EditBillModal'
 
@@ -230,6 +233,8 @@ export default function App() {
 
   const [editingRawMaterialId, setEditingRawMaterialId] = useState(null)
   const [editRawMaterialInputs, setEditRawMaterialInputs] = useState({})
+  const [productionSizes, setProductionSizes] = useState(null) // null = no size breakdown
+  const [entrySection, setEntrySection] = useState('entry')
   const [editingProductionId, setEditingProductionId] = useState(null)
   const [editProductionInputs, setEditProductionInputs] = useState({})
 
@@ -1586,16 +1591,25 @@ export default function App() {
   const handleAddProduction = async (e) => {
     e.preventDefault()
     if (!newProduction.articleNumber) return
-    const dozens = Number(newProduction.dozens) || 0
-    const pairs = Number(newProduction.pairs) || 0
-    if (dozens <= 0 && pairs <= 0) { alert('Enter quantity in dozens and/or pairs.'); return }
+    const variants = inventoryByArticle[newProduction.articleNumber.trim()] || []
+    const sizes = productionSizes ? toSizePayload(productionSizes, variants) : []
+    if (productionSizes && productionSizes.some(r => !r.productId && (Number(r.dozens) > 0 || Number(r.pairs) > 0))) {
+      alert('Choose a size for every row that has a quantity.')
+      return
+    }
+    // With sizes, the totals are the sum of the sizes
+    const totals = sizes.length > 0 ? sizeTotals(productionSizes) : null
+    const dozens = totals ? totals.dozens : Number(newProduction.dozens) || 0
+    const pairs = totals ? totals.pairs : Number(newProduction.pairs) || 0
+    if (dozens <= 0 && pairs <= 0) { alert(productionSizes ? 'Enter dozens or pairs for at least one size.' : 'Enter quantity in dozens and/or pairs.'); return }
     try {
       const res = await axios.post(`${API_BASE_URL}/api/production`, {
         date: newProduction.date || new Date().toISOString().split('T')[0],
         articleNumber: newProduction.articleNumber.trim(),
         dozens,
         pairs,
-        notes: newProduction.notes || ''
+        notes: newProduction.notes || '',
+        sizes
       }, { headers: authHeaders() })
       setProductionRecords(prev => [{
         ...res.data,
@@ -1605,6 +1619,9 @@ export default function App() {
         date: new Date().toISOString().split('T')[0],
         articleNumber: '', dozens: '', pairs: '', notes: ''
       })
+      setProductionSizes(null)
+      // The server added the made pairs to finished stock
+      if (sizes.length > 0) fetchAllData()
     } catch (err) {
       console.error('Add production failed:', err)
       alert('Failed to save production record.')
@@ -1637,10 +1654,12 @@ export default function App() {
   }
 
   const handleDeleteProduction = async (id) => {
-    if (!window.confirm('Delete this production record?')) return
+    const hasSizes = (productionRecords.find(p => p.id === id)?.sizes || []).length > 0
+    if (!window.confirm(hasSizes ? 'Delete this production record? Its pairs will be taken back out of finished stock.' : 'Delete this production record?')) return
     try {
       await axios.delete(`${API_BASE_URL}/api/production/${id}`, { headers: authHeaders() })
       setProductionRecords(prev => prev.filter(p => p.id !== id))
+      if (hasSizes) fetchAllData()
     } catch (err) {
       console.error('Delete production failed:', err)
       alert('Failed to delete production record.')
@@ -1732,7 +1751,7 @@ export default function App() {
             {tabs.map(tab => (
               <button
                 key={tab.id}
-                onClick={() => setActiveTab(tab.id)}
+                onClick={() => { setActiveTab(tab.id); if (tab.id === 'entry') setEntrySection('entry') }}
                 style={{
                   padding: '6px 12px',
                   borderRadius: '6px',
@@ -2763,9 +2782,28 @@ export default function App() {
               <datalist id="production-articles">
                 {Object.keys(inventoryByArticle).map(a => <option key={a} value={a} />)}
               </datalist>
-              <input type="number" min="0" step="0.01" placeholder="Dozens produced" value={newProduction.dozens} onChange={e => setNewProduction({ ...newProduction, dozens: e.target.value })} style={{ padding: '10px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '14px' }} />
-              <input type="number" min="0" step="1" placeholder="Extra pairs (optional)" value={newProduction.pairs} onChange={e => setNewProduction({ ...newProduction, pairs: e.target.value })} style={{ padding: '10px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '14px' }} />
+              {productionSizes ? (
+                <>
+                  <input type="text" readOnly aria-label="Dozens (from sizes)" value={`${sizeTotals(productionSizes).dozens} dozens`} style={{ padding: '10px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '14px', backgroundColor: '#f8fafc', color: '#475569' }} />
+                  <input type="text" readOnly aria-label="Extra pairs (from sizes)" value={`${sizeTotals(productionSizes).pairs} extra pairs`} style={{ padding: '10px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '14px', backgroundColor: '#f8fafc', color: '#475569' }} />
+                </>
+              ) : (
+                <>
+                  <input type="number" min="0" step="0.01" placeholder="Dozens produced" value={newProduction.dozens} onChange={e => setNewProduction({ ...newProduction, dozens: e.target.value })} style={{ padding: '10px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '14px' }} />
+                  <input type="number" min="0" step="1" placeholder="Extra pairs (optional)" value={newProduction.pairs} onChange={e => setNewProduction({ ...newProduction, pairs: e.target.value })} style={{ padding: '10px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '14px' }} />
+                </>
+              )}
               <input type="text" placeholder="Notes (shift, operator, etc.)" value={newProduction.notes} onChange={e => setNewProduction({ ...newProduction, notes: e.target.value })} style={{ padding: '10px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '14px' }} />
+              {productionSizes ? (
+                <>
+                  {(inventoryByArticle[newProduction.articleNumber.trim()] || []).length === 0
+                    ? <p style={{ gridColumn: '1 / -1', margin: 0, color: '#b45309', fontSize: '13px' }}>Pick an article from the list to choose its sizes.</p>
+                    : <ProductionSizes variants={inventoryByArticle[newProduction.articleNumber.trim()]} rows={productionSizes} onChange={setProductionSizes} />}
+                  <button type="button" onClick={() => setProductionSizes(null)} style={{ backgroundColor: '#fff', color: '#475569', border: '1px solid #cbd5e1', borderRadius: '6px', padding: '10px', cursor: 'pointer', fontSize: '14px', fontWeight: '600' }}>✕ Remove sizes</button>
+                </>
+              ) : (
+                <button type="button" onClick={() => setProductionSizes([emptySize()])} style={{ backgroundColor: '#f1f5f9', color: '#475569', border: '1px dashed #cbd5e1', borderRadius: '6px', padding: '10px', cursor: 'pointer', fontSize: '14px', fontWeight: '600' }}>📏 Add sizes</button>
+              )}
               <button type="submit" style={{ backgroundColor: '#714B67', color: '#ffffff', fontWeight: '700', border: 'none', borderRadius: '6px', padding: '10px', cursor: 'pointer', fontSize: '14px', gridColumn: 'span full' }}>+ Record Production</button>
             </form>
 
@@ -2799,14 +2837,17 @@ export default function App() {
                             {isEditing ? (
                               <input type="text" value={inputs.articleNumber ?? p.articleNumber} onChange={e => setEditProductionInputs(prev => ({ ...prev, [p.id]: { ...(prev[p.id] || {}), articleNumber: e.target.value } }))} style={{ padding: '4px 6px', fontSize: '12px', borderRadius: '4px', border: '1px solid #cbd5e1', width: '120px' }} />
                             ) : p.articleNumber}
+                            {(p.sizes || []).length > 0 && (
+                              <div style={{ fontSize: '12px', fontWeight: '500', color: '#64748b', marginTop: '4px' }}>📏 {describeSizes(p.sizes)}</div>
+                            )}
                           </td>
                           <td style={{ padding: '14px', fontWeight: '700', color: '#2563eb' }}>
-                            {isEditing ? (
+                            {isEditing && !(p.sizes || []).length ? (
                               <input type="number" min="0" step="0.01" value={inputs.dozens ?? p.dozens} onChange={e => setEditProductionInputs(prev => ({ ...prev, [p.id]: { ...(prev[p.id] || {}), dozens: e.target.value } }))} style={{ padding: '4px 6px', fontSize: '12px', borderRadius: '4px', border: '1px solid #cbd5e1', width: '70px' }} />
                             ) : numberOrZero(p.dozens).toFixed(2)}
                           </td>
                           <td style={{ padding: '14px', fontWeight: '700', color: '#0f766e' }}>
-                            {isEditing ? (
+                            {isEditing && !(p.sizes || []).length ? (
                               <input type="number" min="0" step="1" value={inputs.pairs ?? p.pairs} onChange={e => setEditProductionInputs(prev => ({ ...prev, [p.id]: { ...(prev[p.id] || {}), pairs: e.target.value } }))} style={{ padding: '4px 6px', fontSize: '12px', borderRadius: '4px', border: '1px solid #cbd5e1', width: '70px' }} />
                             ) : numberOrZero(p.pairs)}
                           </td>
@@ -2838,16 +2879,27 @@ export default function App() {
               </table>
             </div>
 
+            <DeductionUsagePanel token={token} production={productionRecords} />
+
             <MaterialUsagePanel token={token} production={productionRecords} />
           </div>
         )}
 
-        {activeTab === 'entry' && <EntryModule token={token} username={username} />}
+        {activeTab === 'entry' && <EntryModule key={entrySection} token={token} username={username} initialSection={entrySection} />}
 
         {/* ============================== Raw Materials tab ============================== */}
         {activeTab === 'rawmaterials' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-            <h2 style={{ margin: 0, fontSize: '18px', fontWeight: '700', color: '#1e293b' }}>🧱 Raw Material Inventory</h2>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
+              <h2 style={{ margin: 0, fontSize: '18px', fontWeight: '700', color: '#1e293b' }}>🧱 Raw Material Inventory</h2>
+              <button
+                type="button"
+                onClick={() => { setEntrySection('issue'); setActiveTab('entry') }}
+                style={{ backgroundColor: '#714B67', color: '#fff', border: 'none', borderRadius: '6px', padding: '10px 16px', cursor: 'pointer', fontSize: '14px', fontWeight: '700' }}
+              >
+                ➖ Production Deduction
+              </button>
+            </div>
 
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '12px' }}>
               <div style={{ backgroundColor: '#faf5f8', border: '1px solid #f0d8ec', padding: '16px 18px', borderRadius: '8px' }}>

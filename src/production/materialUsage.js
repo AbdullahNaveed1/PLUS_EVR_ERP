@@ -31,7 +31,7 @@ const receivedBetween = (entries, material, unit, after, upTo) => {
   let qty = 0
   let otherUnits = 0
   entries.forEach(e => {
-    if (e.voided || !sameText(e.material, material)) return
+    if (e.voided || e.kind === 'used' || !sameText(e.material, material)) return
     const d = day(e.date)
     if (d <= after || d > upTo) return
     if (sameText(e.unit, unit)) qty += Number(e.quantity) || 0

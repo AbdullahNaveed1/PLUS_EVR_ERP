@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text.Json;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -73,9 +74,11 @@ namespace ShoeFactoryApi.Controllers
         {
             var item = await _db.ProductionRecords.FindAsync(id);
             if (item == null) return NotFound();
+            item.Sizes = ReadSizes(item.SizesJson);
             return item;
         }
 
+        // Pairs made per size are added to that product's finished-goods stock in the same save
         [HttpPost]
         public async Task<ActionResult<ProductionRecord>> Create([FromBody] ProductionRecord input)
         {
@@ -85,6 +88,10 @@ namespace ShoeFactoryApi.Controllers
 
             // Normalize: store date at midnight UTC to avoid duplicate-day issues
             input.Date = DateTime.SpecifyKind(input.Date.Date, DateTimeKind.Utc);
+
+            var sizes = CleanSizes(input.Sizes);
+            ApplySizes(input, sizes);
+            await MoveStock(new List<ProductionSize>(), sizes);
 
             _db.ProductionRecords.Add(input);
             await _db.SaveChangesAsync();
@@ -99,9 +106,15 @@ namespace ShoeFactoryApi.Controllers
 
             existing.Date = DateTime.SpecifyKind(input.Date.Date, DateTimeKind.Utc);
             existing.ArticleNumber = input.ArticleNumber;
+            existing.Notes = input.Notes;
+
+            var before = ReadSizes(existing.SizesJson);
+            // Sizes left out of the request keep what was saved
+            var after = input.Sizes == null ? before : CleanSizes(input.Sizes);
             existing.Dozens = input.Dozens;
             existing.Pairs = input.Pairs;
-            existing.Notes = input.Notes;
+            ApplySizes(existing, after);
+            await MoveStock(before, after);
 
             await _db.SaveChangesAsync();
             return Ok(existing);
@@ -113,9 +126,58 @@ namespace ShoeFactoryApi.Controllers
             var existing = await _db.ProductionRecords.FindAsync(id);
             if (existing == null) return NotFound();
 
+            await MoveStock(ReadSizes(existing.SizesJson), new List<ProductionSize>());
             _db.ProductionRecords.Remove(existing);
             await _db.SaveChangesAsync();
             return NoContent();
+        }
+
+        private static List<ProductionSize> ReadSizes(string? json)
+        {
+            if (string.IsNullOrWhiteSpace(json)) return new List<ProductionSize>();
+            try { return JsonSerializer.Deserialize<List<ProductionSize>>(json) ?? new List<ProductionSize>(); }
+            catch (JsonException) { return new List<ProductionSize>(); }
+        }
+
+        private static List<ProductionSize> CleanSizes(List<ProductionSize>? sizes)
+            => (sizes ?? new List<ProductionSize>())
+                .Where(s => s.Dozens >= 0 && s.Pairs >= 0 && s.TotalPairs > 0)
+                .Select(s => new ProductionSize
+                {
+                    ProductId = s.ProductId,
+                    Size = (s.Size ?? string.Empty).Trim(),
+                    Color = string.IsNullOrWhiteSpace(s.Color) ? null : s.Color.Trim(),
+                    Dozens = s.Dozens,
+                    Pairs = s.Pairs
+                })
+                .ToList();
+
+        // With a size breakdown, the record's totals are the sum of its sizes
+        private static void ApplySizes(ProductionRecord record, List<ProductionSize> sizes)
+        {
+            record.SizesJson = JsonSerializer.Serialize(sizes);
+            record.Sizes = sizes;
+            if (sizes.Count == 0) return;
+            record.Dozens = sizes.Sum(s => s.Dozens);
+            record.Pairs = sizes.Sum(s => s.Pairs);
+        }
+
+        private async Task MoveStock(List<ProductionSize> before, List<ProductionSize> after)
+        {
+            static Dictionary<int, decimal> ByProduct(List<ProductionSize> sizes) => sizes
+                .Where(s => s.ProductId.HasValue)
+                .GroupBy(s => s.ProductId!.Value)
+                .ToDictionary(g => g.Key, g => g.Sum(s => s.TotalPairs));
+
+            var was = ByProduct(before);
+            var now = ByProduct(after);
+            foreach (var productId in was.Keys.Union(now.Keys))
+            {
+                var change = (int)decimal.Round(now.GetValueOrDefault(productId) - was.GetValueOrDefault(productId), MidpointRounding.AwayFromZero);
+                if (change == 0) continue;
+                var product = await _db.Products.FindAsync(productId);
+                if (product != null) product.Qty += change;
+            }
         }
     }
 }

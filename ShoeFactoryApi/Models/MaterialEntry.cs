@@ -3,7 +3,7 @@ using System.ComponentModel.DataAnnotations;
 namespace ShoeFactoryApi.Models
 {
     /// <summary>
-    /// One goods-receipt line: material that entered the factory.
+    /// One material movement: "received" (goods entered the factory) or "used" (deducted for production).
     /// Never hard-deleted — "delete" sets Voided so it can be undone.
     /// </summary>
     public class MaterialEntry
@@ -18,6 +18,11 @@ namespace ShoeFactoryApi.Models
         public string Material { get; set; } = string.Empty;
 
         public decimal Quantity { get; set; }
+
+        // "received" or "used"; stock balance = received − used
+        [Required]
+        [MaxLength(20)]
+        public string Kind { get; set; } = MaterialEntryKinds.Received;
 
         [Required]
         [MaxLength(30)]
@@ -51,5 +56,11 @@ namespace ShoeFactoryApi.Models
         public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 
         public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
+    }
+
+    public static class MaterialEntryKinds
+    {
+        public const string Received = "received";
+        public const string Used = "used";
     }
 }
