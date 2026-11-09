@@ -38,6 +38,8 @@ namespace ShoeFactoryApi.Controllers
         [HttpPost]
         public async Task<ActionResult<Expense>> PostExpense(Expense expense)
         {
+            // PostgreSQL only stores UTC times; a plain date ("2026-11-09") arrives without a zone
+            expense.Date = DateTime.SpecifyKind(expense.Date, DateTimeKind.Utc);
             _context.Expenses.Add(expense);
             await _context.SaveChangesAsync();
             return CreatedAtAction(nameof(GetExpense), new { id = expense.Id }, expense);
@@ -49,6 +51,7 @@ namespace ShoeFactoryApi.Controllers
         {
             if (id != expense.Id) return BadRequest();
 
+            expense.Date = DateTime.SpecifyKind(expense.Date, DateTimeKind.Utc);
             _context.Entry(expense).State = EntityState.Modified;
 
             try

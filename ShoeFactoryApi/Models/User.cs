@@ -6,5 +6,8 @@ namespace ShoeFactoryApi.Models
         public string Username { get; set; } = string.Empty;
         public string PasswordHash { get; set; } = string.Empty;
         public string Role { get; set; } = "Staff";
+
+        // Tabs a Staff user may open, comma separated (e.g. "sales,production"); null = every tab
+        public string? AllowedTabs { get; set; }
     }
 }

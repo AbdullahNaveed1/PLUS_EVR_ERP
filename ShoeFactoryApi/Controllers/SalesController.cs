@@ -32,14 +32,17 @@ namespace ShoeFactoryApi.Controllers
             return sale == null ? NotFound() : Ok(ToResponse(sale));
         }
 
+        // Saving a bill takes its pairs out of finished-goods stock in the same save, for every role.
+        // ?skipStock=true is only for importing old bills whose goods already left stock.
         [HttpPost]
-        public async Task<ActionResult<object>> PostSale(JsonElement payload)
+        public async Task<ActionResult<object>> PostSale(JsonElement payload, [FromQuery] bool skipStock = false)
         {
             var sale = new Sale();
             // FIX #6 — recompute totals from line items; reject mismatches
             if (!ApplyPayloadAndRecalculate(sale, payload, out var error))
                 return BadRequest(new { message = error });
 
+            if (!skipStock) await MoveStock(null, PairsByProduct(sale.LineItemsJson));
             _context.Sales.Add(sale);
             await _context.SaveChangesAsync();
             return CreatedAtAction(nameof(GetSale), new { id = sale.Id }, ToResponse(sale));
@@ -59,21 +62,25 @@ namespace ShoeFactoryApi.Controllers
                 return BadRequest(new { message = error });
 
             // Bills saved before line items existed have nothing to compare against: leave stock alone
-            if (pairsBefore != null)
-            {
-                var pairsAfter = PairsByProduct(sale.LineItemsJson) ?? new Dictionary<int, decimal>();
-                foreach (var productId in pairsBefore.Keys.Union(pairsAfter.Keys))
-                {
-                    var change = pairsAfter.GetValueOrDefault(productId) - pairsBefore.GetValueOrDefault(productId);
-                    var pairs = (int)decimal.Round(change, MidpointRounding.AwayFromZero);
-                    if (pairs == 0) continue;
-                    var product = await _context.Products.FindAsync(productId);
-                    if (product != null) product.Qty -= pairs;
-                }
-            }
+            if (pairsBefore != null) await MoveStock(pairsBefore, PairsByProduct(sale.LineItemsJson));
 
             await _context.SaveChangesAsync();
             return NoContent();
+        }
+
+        // Stock goes down by the pairs billed now and back up by the pairs billed before
+        private async Task MoveStock(Dictionary<int, decimal>? before, Dictionary<int, decimal>? after)
+        {
+            before ??= new Dictionary<int, decimal>();
+            after ??= new Dictionary<int, decimal>();
+            foreach (var productId in before.Keys.Union(after.Keys))
+            {
+                var change = after.GetValueOrDefault(productId) - before.GetValueOrDefault(productId);
+                var pairs = (int)decimal.Round(change, MidpointRounding.AwayFromZero);
+                if (pairs == 0) continue;
+                var product = await _context.Products.FindAsync(productId);
+                if (product != null) product.Qty -= pairs;
+            }
         }
 
         // Pairs per product id in a bill's saved line items; null when they cannot be read
@@ -102,6 +109,8 @@ namespace ShoeFactoryApi.Controllers
         {
             var sale = await _context.Sales.FindAsync(id);
             if (sale == null) return NotFound();
+            // Deleting a bill puts its pairs back into stock
+            await MoveStock(PairsByProduct(sale.LineItemsJson), null);
             _context.Sales.Remove(sale);
             await _context.SaveChangesAsync();
             return NoContent();

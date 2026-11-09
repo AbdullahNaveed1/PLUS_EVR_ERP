@@ -7,6 +7,8 @@ import ProductionSizes from './production/ProductionSizes'
 import { describeSizes, emptySize, sizeTotals, toSizePayload } from './production/sizeRows'
 import CustomerHistory from './customers/CustomerHistory'
 import EditBillModal from './sales/EditBillModal'
+import UsersPage from './admin/UsersPage'
+import AuditPage from './admin/AuditPage'
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || ''
 
@@ -144,6 +146,10 @@ export default function App() {
   const [token, setToken] = useState(() => localStorage.getItem('token'))
   const [role, setRole] = useState(() => localStorage.getItem('role'))
   const [username, setUsername] = useState(() => localStorage.getItem('username'))
+  // Tabs a Staff user may open; null = every tab. Refreshed from the server on load.
+  const [allowedTabs, setAllowedTabs] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('allowedTabs') || 'null') } catch { return null }
+  })
 
   const [loginForm, setLoginForm] = useState({ username: '', password: '' })
   const [loginError, setLoginError] = useState('')
@@ -295,7 +301,7 @@ export default function App() {
       const legacyPayments = JSON.parse(localStorage.getItem('factory_payments') || '[]')
 
       if (savedSales.length === 0 && legacySales.length > 0) {
-        const migratedSales = await Promise.all(legacySales.map(sale => axios.post(`${API_BASE_URL}/api/sales`, sale, { headers })))
+        const migratedSales = await Promise.all(legacySales.map(sale => axios.post(`${API_BASE_URL}/api/sales?skipStock=true`, sale, { headers })))
         localStorage.removeItem('factory_sales')
         setSales(migratedSales.map(response => normalizeSale(response.data)))
       } else {
@@ -331,15 +337,17 @@ export default function App() {
     setLoginError('')
     try {
       const response = await axios.post(`${API_BASE_URL}/api/auth/login`, loginForm)
-      const { token, role, username } = response.data
+      const { token, role, username, allowedTabs } = response.data
 
       localStorage.setItem('token', token)
-      localStorage.setItem('role', role || 'Admin')
+      localStorage.setItem('role', role || 'Staff')
       localStorage.setItem('username', username || loginForm.username)
+      localStorage.setItem('allowedTabs', JSON.stringify(allowedTabs ?? null))
 
       setToken(token)
-      setRole(role || 'Admin')
+      setRole(role || 'Staff')
       setUsername(username || loginForm.username)
+      setAllowedTabs(allowedTabs ?? null)
       setLoginForm({ username: '', password: '' })
     } catch (err) {
       setLoginError('Invalid username or password')
@@ -350,10 +358,25 @@ export default function App() {
     localStorage.removeItem('token')
     localStorage.removeItem('role')
     localStorage.removeItem('username')
+    localStorage.removeItem('allowedTabs')
+    setAllowedTabs(null)
     setToken(null)
     setRole(null)
     setUsername(null)
   }
+
+  // Pick up role / tab changes an Admin made since this user signed in
+  useEffect(() => {
+    if (!token) return
+    axios.get(`${API_BASE_URL}/api/auth/me`, { headers: { Authorization: `Bearer ${token}` } })
+      .then(res => {
+        setRole(res.data.role)
+        setAllowedTabs(res.data.allowedTabs ?? null)
+        localStorage.setItem('role', res.data.role)
+        localStorage.setItem('allowedTabs', JSON.stringify(res.data.allowedTabs ?? null))
+      })
+      .catch(err => { if (err.response?.status === 401) handleLogout() })
+  }, [token])
 
   const totalSoldPairsByProduct = useMemo(() => {
     const map = {}
@@ -689,34 +712,6 @@ export default function App() {
     setCartItems(cartItems.filter((_, i) => i !== index))
   }
 
-  const deductStockFromInventory = async (lineItems) => {
-    const soldByProduct = {}
-
-    for (const item of lineItems) {
-      const pid = String(item.productId || '').trim()
-      if (!pid || pid === 'N/A') continue
-      const soldPairs =
-        numberOrZero(item.pairs) ||
-        (numberOrZero(item.qty) * (item.unitType === 'pairs' ? 1 : 12))
-      if (soldPairs <= 0) continue
-      soldByProduct[pid] = (soldByProduct[pid] || 0) + soldPairs
-    }
-
-    const payload = Object.entries(soldByProduct).map(([productId, quantity]) => ({
-      productId: Number(productId),
-      quantity: Math.round(quantity),
-      referenceNumber: `SALE-${Date.now()}`
-    }))
-
-    if (payload.length === 0) return
-
-    try {
-      await axios.post(`${API_BASE_URL}/api/inventory/deduct-bulk`, payload, { headers: authHeaders() })
-    } catch (err) {
-      console.error('Bulk stock deduction failed:', err)
-    }
-  }
-
   const handleGenerateMultiItemBill = async (e) => {
     e.preventDefault()
     if (!saleCustomerName || !saleCustomerUniqueId || cartItems.length === 0) return
@@ -775,7 +770,7 @@ export default function App() {
 
       setSales(prevSales => [normalizedNewSale, ...prevSales])
 
-      await deductStockFromInventory(evaluatedItems)
+      // The server took the billed pairs out of stock; reload to show it
       await fetchAllData()
     } catch (err) {
       console.error('Error saving bill:', err)
@@ -819,6 +814,8 @@ export default function App() {
       await Promise.all(selectedBills.map(sale => axios.delete(`${API_BASE_URL}/api/sales/${sale.id}`, { headers: authHeaders() })))
       setSales(currentSales => currentSales.filter(sale => !selectedSaleIds.includes(sale.id)))
       setSelectedSaleIds([])
+      // Deleted bills put their pairs back into stock on the server
+      fetchAllData()
     } catch (err) {
       console.error('Error deleting bills:', err)
       alert('Failed to delete bills from the database.')
@@ -1692,6 +1689,15 @@ export default function App() {
     { id: 'wages', label: 'Daily Wages' },
     { id: 'balancesheet', label: 'Balance Sheet' }
   ]
+  const adminTabs = [
+    { id: 'users', label: '👥 Users' },
+    { id: 'audit', label: '🕵️ Audit Log' }
+  ]
+  // Admins see everything; Staff see only the tabs an Admin gave them
+  const visibleTabs = role === 'Admin'
+    ? [...tabs, ...adminTabs]
+    : tabs.filter(t => !allowedTabs || allowedTabs.includes(t.id))
+  const currentTab = visibleTabs.some(t => t.id === activeTab) ? activeTab : visibleTabs[0]?.id
 
   const filteredStockInventory = useMemo(() => {
     const q = stockReportSearch.trim().toLowerCase()
@@ -1758,7 +1764,7 @@ export default function App() {
 
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', backgroundColor: '#5c3c53', padding: '4px', borderRadius: '8px' }}>
-            {tabs.map(tab => (
+            {visibleTabs.map(tab => (
               <button
                 key={tab.id}
                 onClick={() => { setActiveTab(tab.id); if (tab.id === 'entry') setEntrySection('entry') }}
@@ -1769,10 +1775,10 @@ export default function App() {
                   cursor: 'pointer',
                   fontSize: '12px',
                   whiteSpace: 'nowrap',
-                  fontWeight: activeTab === tab.id ? '700' : '500',
-                  backgroundColor: activeTab === tab.id ? '#ffffff' : 'transparent',
-                  color: activeTab === tab.id ? '#714B67' : '#f3e8f2',
-                  boxShadow: activeTab === tab.id ? '0 1px 3px rgba(0,0,0,0.2)' : 'none',
+                  fontWeight: currentTab === tab.id ? '700' : '500',
+                  backgroundColor: currentTab === tab.id ? '#ffffff' : 'transparent',
+                  color: currentTab === tab.id ? '#714B67' : '#f3e8f2',
+                  boxShadow: currentTab === tab.id ? '0 1px 3px rgba(0,0,0,0.2)' : 'none',
                   transition: 'all 0.15s ease'
                 }}
               >
@@ -1797,7 +1803,7 @@ export default function App() {
           </div>
         )}
 
-        {activeTab === 'dashboard' && (
+        {currentTab === 'dashboard' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
             <div style={{ backgroundColor: '#ffffff', padding: '18px 24px', borderRadius: '10px', border: '1px solid #e2e8f0', boxShadow: '0 1px 3px rgba(0,0,0,0.05)', display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'center', gap: '10px' }}>
               <h2 style={{ margin: 0, fontSize: '18px', fontWeight: '700', color: '#1e293b' }}>Factory Overview & Metrics</h2>
@@ -1888,7 +1894,7 @@ export default function App() {
           </div>
         )}
 
-        {activeTab === 'inventory' && (
+        {currentTab === 'inventory' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
             <h2 style={{ margin: 0, fontSize: '18px', fontWeight: '700', color: '#1e293b' }}>Stock & Regional Pricing (Stock in Dozens & Pairs)</h2>
 
@@ -2009,7 +2015,7 @@ export default function App() {
           </div>
         )}
 
-        {activeTab === 'stockreport' && (
+        {currentTab === 'stockreport' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
               <h2 style={{ margin: 0, fontSize: '18px', fontWeight: '700', color: '#1e293b' }}>📦 Stock Inventory Report (Dozens)</h2>
@@ -2078,7 +2084,7 @@ export default function App() {
           </div>
         )}
 
-        {activeTab === 'search' && (
+        {currentTab === 'search' && (
           <div style={{ maxWidth: '700px', margin: '30px auto', backgroundColor: '#ffffff', padding: '30px', borderRadius: '12px', border: '1px solid #e2e8f0', boxShadow: '0 4px 6px rgba(0,0,0,0.05)' }}>
             <h2 style={{ fontSize: '20px', fontWeight: '800', marginBottom: '8px', color: '#1e293b' }}>Live Inventory Search</h2>
             <p style={{ fontSize: '13px', color: '#64748b', marginBottom: '20px' }}>Type an article no, size, or color to check stock availability and regional pricing directly.</p>
@@ -2144,7 +2150,7 @@ export default function App() {
           </div>
         )}
 
-        {activeTab === 'customers' && historyCustomer && (
+        {currentTab === 'customers' && historyCustomer && (
           <CustomerHistory
             customer={historyCustomer}
             ledger={buildCustomerLedger(historyCustomer, '', '')}
@@ -2158,7 +2164,7 @@ export default function App() {
           />
         )}
 
-        {activeTab === 'customers' && !historyCustomer && (
+        {currentTab === 'customers' && !historyCustomer && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
               <h2 style={{ margin: 0, fontSize: '18px', fontWeight: '700', color: '#1e293b' }}>Customer Accounts, Unique IDs & Remaining Balance</h2>
@@ -2303,7 +2309,7 @@ export default function App() {
           </div>
         )}
 
-        {activeTab === 'reports' && (
+        {currentTab === 'reports' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
             <h2 style={{ margin: 0, fontSize: '18px', fontWeight: '700', color: '#1e293b' }}>گاہک کی ہفتہ وار یا کسٹم رپورٹ جنریٹر (Customer Report Generator)</h2>
 
@@ -2445,7 +2451,7 @@ export default function App() {
           </div>
         )}
 
-        {activeTab === 'sales' && (
+        {currentTab === 'sales' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
               <h2 style={{ margin: 0, fontSize: '18px', fontWeight: '700', color: '#1e293b' }}>Wholesale Multi-Item Billing & Invoicing</h2>
@@ -2764,7 +2770,7 @@ export default function App() {
         )}
 
         {/* ============================== Production tab ============================== */}
-        {activeTab === 'production' && (
+        {currentTab === 'production' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
               <h2 style={{ margin: 0, fontSize: '18px', fontWeight: '700', color: '#1e293b' }}>🏭 Daily Production Log</h2>
@@ -2895,10 +2901,10 @@ export default function App() {
           </div>
         )}
 
-        {activeTab === 'entry' && <EntryModule key={entrySection} token={token} username={username} initialSection={entrySection} rawMaterials={rawMaterials} onRawMaterialsChanged={refreshRawMaterials} />}
+        {currentTab === 'entry' && <EntryModule key={entrySection} token={token} username={username} initialSection={entrySection} rawMaterials={rawMaterials} onRawMaterialsChanged={refreshRawMaterials} />}
 
         {/* ============================== Raw Materials tab ============================== */}
-        {activeTab === 'rawmaterials' && (
+        {currentTab === 'rawmaterials' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
               <h2 style={{ margin: 0, fontSize: '18px', fontWeight: '700', color: '#1e293b' }}>🧱 Raw Material Inventory</h2>
@@ -2995,7 +3001,7 @@ export default function App() {
           </div>
         )}
 
-        {activeTab === 'wages' && (
+        {currentTab === 'wages' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
             <div style={{ backgroundColor: '#ffffff', padding: '20px', borderRadius: '12px', border: '1px solid #e2e8f0', boxShadow: '0 1px 3px rgba(15, 23, 42, 0.06)' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', flexWrap: 'wrap', marginBottom: '16px' }}>
@@ -3102,7 +3108,7 @@ export default function App() {
           </div>
         )}
 
-        {activeTab === 'expenses' && (
+        {currentTab === 'expenses' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
             <h2 style={{ margin: 0, fontSize: '18px', fontWeight: '700', color: '#1e293b' }}>Factory Expenditure</h2>
             <form onSubmit={handleAddExpense} style={{ backgroundColor: '#ffffff', padding: '20px', borderRadius: '10px', border: '1px solid #e2e8f0', boxShadow: '0 1px 3px rgba(0,0,0,0.05)', display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '12px' }}>
@@ -3137,7 +3143,7 @@ export default function App() {
           </div>
         )}
 
-        {activeTab === 'balancesheet' && (
+        {currentTab === 'balancesheet' && (
           <div style={{ maxWidth: '750px', margin: '30px auto', backgroundColor: '#ffffff', padding: '30px', borderRadius: '12px', border: '1px solid #e2e8f0', boxShadow: '0 4px 6px rgba(0,0,0,0.05)' }}>
             <h2 style={{ textAlign: 'center', fontSize: '20px', fontWeight: '800', marginBottom: '24px', color: '#1e293b' }}>Factory Balance Sheet</h2>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '20px' }}>
@@ -3182,6 +3188,10 @@ export default function App() {
             </div>
           </div>
         )}
+
+        {currentTab === 'users' && <UsersPage token={token} currentUser={username} tabs={tabs} />}
+
+        {currentTab === 'audit' && <AuditPage token={token} />}
 
         {editingBill && role === 'Admin' && (
           <EditBillModal

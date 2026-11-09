@@ -11,7 +11,8 @@ using ShoeFactoryApi.Services;
 var builder = WebApplication.CreateBuilder(args);
 
 // 1. Services
-builder.Services.AddControllers()
+builder.Services.AddHttpContextAccessor();
+builder.Services.AddControllers(options => options.Filters.Add<ShoeFactoryApi.Auth.AccessFilter>())
     .AddJsonOptions(options =>
     {
         options.JsonSerializerOptions.PropertyNameCaseInsensitive = true;
@@ -145,7 +146,8 @@ app.MapGet("/api/backup/download", async (FactoryDbContext db) =>
             .Select(p => new { p.Id, p.Date, p.ArticleNumber, p.Dozens, p.Pairs, p.Notes, p.CreatedAt, p.SizesJson }),
         BomEntries = await db.BomEntries.AsNoTracking().ToListAsync(),
         MaterialEntries = await db.MaterialEntries.AsNoTracking().ToListAsync(),
-        MaterialCounts = await db.MaterialCounts.AsNoTracking().ToListAsync()
+        MaterialCounts = await db.MaterialCounts.AsNoTracking().ToListAsync(),
+        AuditLogs = await db.AuditLogs.AsNoTracking().OrderBy(a => a.Id).ToListAsync()
     };
 
     var json = JsonSerializer.Serialize(snapshot, new JsonSerializerOptions { WriteIndented = true });

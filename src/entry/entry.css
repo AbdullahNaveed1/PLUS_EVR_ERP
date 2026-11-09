@@ -404,3 +404,14 @@ th.em-num .em-sort { justify-content: flex-end; }
   .em-ps-row { grid-template-columns: 1fr 1fr; }
   .em-ps-row .em-field:first-child { grid-column: 1 / -1; }
 }
+
+/* ---------- Users & audit log ---------- */
+.em-tab-picker { display: flex; flex-wrap: wrap; gap: 8px 16px; }
+.em-tab-picker .em-check { font-size: 14px; }
+.em-audit-tag { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 12px; font-weight: 700; white-space: nowrap; }
+.em-audit-good { background: #dcfce7; color: #166534; }
+.em-audit-info { background: #dbeafe; color: #1e40af; }
+.em-audit-bad { background: #fee2e2; color: #991b1b; }
+.em-audit-muted { background: #f1f5f9; color: #475569; }
+.em-audit-summary { display: flex; align-items: center; justify-content: space-between; gap: 10px; font-size: 13px; overflow-wrap: anywhere; }
+.em-audit-json { margin: 0; padding: 12px; max-height: 320px; overflow: auto; background: #0f172a; color: #e2e8f0; border-radius: 8px; font-size: 12px; white-space: pre-wrap; overflow-wrap: anywhere; }

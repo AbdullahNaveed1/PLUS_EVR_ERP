@@ -5,6 +5,7 @@ using Microsoft.IdentityModel.Tokens;
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using System.Text;
+using System.Text.Json;
 using ShoeFactoryApi.Data;
 using ShoeFactoryApi.Models;
 using ShoeFactoryApi.DTOs;
@@ -52,27 +53,43 @@ namespace ShoeFactoryApi.Controllers
         public async Task<IActionResult> Login(LoginDto request)
         {
             var user = await _context.Users.FirstOrDefaultAsync(u => u.Username == request.Username);
-            if (user == null)
+            var valid = user != null && BCrypt.Net.BCrypt.Verify(request.Password, user.PasswordHash);
+
+            // Every sign-in attempt is recorded; the password never is
+            _context.AuditLogs.Add(new AuditLog
             {
-                return Unauthorized("Invalid username or password.");
-            }
+                User = (request.Username ?? string.Empty).Trim(),
+                Action = valid ? "login" : "login_failed",
+                Entity = "User",
+                EntityId = user?.Id.ToString(),
+                Changes = JsonSerializer.Serialize(new { ip = HttpContext.Connection.RemoteIpAddress?.ToString() })
+            });
+            await _context.SaveChangesAsync();
 
-            bool isPasswordValid = BCrypt.Net.BCrypt.Verify(request.Password, user.PasswordHash);
-
-            if (!isPasswordValid)
-            {
-                return Unauthorized("Invalid username or password.");
-            }
-
-            var tokenString = GenerateJwtToken(user);
+            if (!valid) return Unauthorized("Invalid username or password.");
 
             return Ok(new
             {
-                token = tokenString,
-                username = user.Username,
-                role = user.Role
+                token = GenerateJwtToken(user!),
+                username = user!.Username,
+                role = user.Role,
+                allowedTabs = AllowedTabsOf(user)
             });
         }
+
+        // The app calls this on load so access changes made by an Admin show without signing out
+        [Authorize]
+        [HttpGet("me")]
+        public async Task<IActionResult> Me()
+        {
+            var user = await _context.Users.AsNoTracking().FirstOrDefaultAsync(u => u.Username == User.Identity!.Name);
+            if (user == null) return Unauthorized();
+            return Ok(new { username = user.Username, role = user.Role, allowedTabs = AllowedTabsOf(user) });
+        }
+
+        // null = every tab (Admins always get null)
+        private static string[]? AllowedTabsOf(User user) =>
+            user.Role == "Admin" ? null : ShoeFactoryApi.Auth.AccessFilter.AllowedTabs(user.AllowedTabs)?.ToArray();
 
         private string GenerateJwtToken(User user)
         {
