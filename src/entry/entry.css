@@ -426,3 +426,27 @@ th.em-num .em-sort { justify-content: flex-end; }
 /* Edit bill: the article & size search gets more room */
 .em-eb-article { grid-column: span 2; }
 @media (max-width: 560px) { .em-eb-article { grid-column: 1 / -1; } }
+
+/* ---------- Simple customer ledger (Full History) ---------- */
+.em-table.em-ledger { min-width: 0; }
+.em-lg-row { cursor: pointer; }
+.em-lg-row:hover td, .em-lg-open td { background: #faf5f8; }
+.em-lg-row:focus-visible { outline: 2px solid var(--em-brand); outline-offset: -2px; }
+.em-lg-credit td:nth-child(3) { color: #15803d; }
+.em-lg-caret { margin-left: 8px; font-size: 10px; color: #94a3b8; }
+.em-lg-details { display: flex; flex-direction: column; gap: 8px; padding: 4px 0; }
+/* On phones the ledger stays a compact 4-column table instead of turning each line into a card */
+@media (max-width: 760px) {
+  .em-table.em-ledger { display: table; width: 100%; font-size: 13px; }
+  .em-table.em-ledger thead { display: table-header-group; }
+  .em-table.em-ledger tbody { display: table-row-group; }
+  .em-table.em-ledger > thead > tr,
+  .em-table.em-ledger > tbody > tr { display: table-row; border: 0; border-radius: 0; margin: 0; padding: 0; background: transparent; }
+  .em-table.em-ledger > thead th,
+  .em-table.em-ledger > tbody > tr > td { display: table-cell; width: auto; padding: 8px 4px; border-bottom: 1px solid var(--em-border); }
+  .em-table.em-ledger > tbody > tr > td::before { content: none; }
+  .em-table.em-ledger .em-num { text-align: right; white-space: nowrap; }
+  .em-table.em-ledger > tbody > tr.em-subrow > td { padding: 4px 6px 10px; }
+  .em-table.em-ledger .em-items { min-width: 0; }
+  .em-table.em-ledger > tbody > tr > td:first-child { white-space: nowrap; font-size: 12px; }
+}
