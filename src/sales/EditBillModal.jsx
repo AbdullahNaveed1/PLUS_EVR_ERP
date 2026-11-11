@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { formatNumber } from '../entry/format'
+import ArticlePicker from '../common/ArticlePicker'
 import '../entry/entry.css'
 
 // Admin window for correcting a saved bill: bill details plus each line's size, qty, unit, rate
@@ -38,16 +39,6 @@ export default function EditBillModal({ sale, inventory, onSave, onClose }) {
   const [submitted, setSubmitted] = useState(false)
 
   const productById = new Map(inventory.map(p => [String(p.id), p]))
-
-  // Sizes offered for a line: every product of the same article, so a wrong size can be swapped
-  const sizeOptions = line => {
-    const current = productById.get(String(line.productId))
-    if (!current) return []
-    const article = current.articleNumber || current.model
-    return inventory
-      .filter(p => (p.articleNumber || p.model) === article && (p.color || '') === (current.color || ''))
-      .sort((a, b) => String(a.size).localeCompare(String(b.size), undefined, { numeric: true }))
-  }
 
   const updateLine = (index, field, value) => {
     setLines(current => current.map((line, i) => {
@@ -143,25 +134,21 @@ export default function EditBillModal({ sale, inventory, onSave, onClose }) {
 
           <div className="em-eb-lines">
             {lines.map((line, index) => {
-              const sizes = sizeOptions(line)
               const amounts = lineAmounts(line)
               const errs = submitted ? lineErrors[index] : {}
               return (
                 <fieldset key={index} className="em-eb-line">
                   <legend>{line.model || `Item ${index + 1}`} <span className="em-hint">#{line.productId}</span></legend>
                   <div className="em-eb-grid">
-                    <label className="em-field">
-                      <span className="em-label">Size</span>
-                      {sizes.length > 1 ? (
-                        <select value={String(line.productId)} onChange={e => updateLine(index, 'productId', e.target.value)}>
-                          {sizes.map(p => (
-                            <option key={p.id} value={String(p.id)}>{p.size || 'N/A'} (stock {formatNumber(toNumber(p.qty))})</option>
-                          ))}
-                        </select>
-                      ) : (
-                        <input className="em-readonly" value={line.size || 'N/A'} readOnly />
-                      )}
-                    </label>
+                    <div className="em-field em-eb-article">
+                      <ArticlePicker
+                        label="Article & size"
+                        products={inventory}
+                        value={line.productId}
+                        onChange={product => updateLine(index, 'productId', String(product.id))}
+                        placeholder={`${line.model || 'Article'} · Size ${line.size || 'N/A'}: type to change`}
+                      />
+                    </div>
                     <label className="em-field">
                       <span className="em-label">Qty</span>
                       <input type="number" min="0" step="any" inputMode="decimal" value={line.qty} aria-invalid={!!errs.qty}

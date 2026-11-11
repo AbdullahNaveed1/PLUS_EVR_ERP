@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import axios from 'axios'
 import { formatNumber } from '../entry/format'
+import ArticlePicker from '../common/ArticlePicker'
 import '../entry/entry.css'
 
 // Recipe per article: how much of each raw material one dozen uses. Production saved for an
@@ -13,7 +14,7 @@ const rs = value => `Rs. ${formatNumber(Math.round((Number(value) || 0) * 100) /
 const errorText = err => err?.response?.data?.message || (err?.response ? `Server error (HTTP ${err.response.status})` : 'Could not reach the server.')
 const emptyLine = () => ({ rawMaterialId: '', qtyPerDozen: '' })
 
-export default function RecipesPanel({ token, rawMaterials, articles }) {
+export default function RecipesPanel({ token, rawMaterials, articles, products = [] }) {
   const headers = useMemo(() => ({ headers: { Authorization: `Bearer ${token}` } }), [token])
   const [recipes, setRecipes] = useState([])
   const [loading, setLoading] = useState(true)
@@ -78,12 +79,24 @@ export default function RecipesPanel({ token, rawMaterials, articles }) {
 
         {editing && (
           <div className="em-ps" style={{ marginBottom: 14 }}>
-            <label className="em-field" style={{ maxWidth: 260 }}>
-              <span className="em-label">Article number</span>
-              <input list="recipe-articles" value={editing.articleNumber} disabled={!editing.isNew}
-                onChange={e => setEditing({ ...editing, articleNumber: e.target.value })} />
-              <datalist id="recipe-articles">{articles.map(a => <option key={a} value={a} />)}</datalist>
-            </label>
+            <div className="em-field" style={{ maxWidth: 320 }}>
+              {editing.isNew ? (
+                <ArticlePicker
+                  mode="article"
+                  allowNew
+                  label="Article number"
+                  products={products}
+                  extraArticles={articles}
+                  value={editing.articleNumber}
+                  onChange={articleNumber => setEditing(prev => ({ ...prev, articleNumber }))}
+                />
+              ) : (
+                <>
+                  <span className="em-label">Article number</span>
+                  <input className="em-readonly" value={editing.articleNumber} readOnly />
+                </>
+              )}
+            </div>
             {editing.lines.map((line, index) => {
               const material = materialById.get(String(line.rawMaterialId))
               return (

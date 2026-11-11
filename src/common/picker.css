@@ -1,0 +1,39 @@
+/* Searchable article picker (ArticlePicker.jsx) */
+.ap-root { position: relative; display: flex; flex-direction: column; gap: 6px; min-width: 0; flex: 2; text-align: left; }
+.ap-label { font-size: 13px; font-weight: 700; color: #334155; }
+.ap-input {
+  width: 100%;
+  min-height: 42px;
+  box-sizing: border-box;
+  padding: 8px 12px;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  background: #fff;
+  color: #0f172a;
+  font: inherit;
+  font-size: 15px;
+}
+.ap-input:focus { outline: 2px solid #714B67; outline-offset: 1px; border-color: #714B67; }
+.ap-input.ap-invalid { border-color: #dc2626; background: #fef2f2; }
+.ap-list {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  z-index: 50;
+  margin: 4px 0 0;
+  padding: 4px;
+  list-style: none;
+  max-height: 320px;
+  overflow-y: auto;
+  background: #fff;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  box-shadow: 0 12px 28px rgba(15, 23, 42, 0.18);
+  min-width: 260px;
+}
+.ap-option { display: flex; flex-direction: column; gap: 2px; padding: 8px 10px; border-radius: 6px; cursor: pointer; font-size: 14px; color: #0f172a; }
+.ap-option.ap-active { background: #f3e8f2; }
+.ap-meta { font-size: 12px; color: #64748b; }
+.ap-out { color: #dc2626; font-weight: 700; }
+.ap-empty { padding: 10px; font-size: 13px; color: #64748b; }

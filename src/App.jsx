@@ -11,6 +11,8 @@ import RecipesPanel from './production/RecipesPanel'
 import ReturnModal from './sales/ReturnModal'
 import { printReturnSlip } from './sales/returnSlip'
 import EditBillModal from './sales/EditBillModal'
+import ArticlePicker from './common/ArticlePicker'
+import { productMatches } from './common/articleSearch'
 import UsersPage from './admin/UsersPage'
 import ProfitPage from './reports/ProfitPage'
 import AuditPage from './admin/AuditPage'
@@ -252,6 +254,7 @@ export default function App() {
   const [editProductionInputs, setEditProductionInputs] = useState({})
 
   const [stockReportSearch, setStockReportSearch] = useState('')
+  const [inventorySearch, setInventorySearch] = useState('')
 
   const [reportCustId, setReportCustId] = useState('');
   const [historyCustomerId, setHistoryCustomerId] = useState(null)
@@ -1988,6 +1991,14 @@ export default function App() {
                 <button type="submit" style={{ flex: 1, backgroundColor: '#714B67', color: '#ffffff', fontWeight: '700', border: 'none', borderRadius: '6px', padding: '10px', cursor: 'pointer', fontSize: '14px' }}>+ Add Child Variant</button>
               </div>
             </form>
+            <input
+              type="search"
+              value={inventorySearch}
+              onChange={e => setInventorySearch(e.target.value)}
+              placeholder="🔍 Quick find: article no, size, colour or ID (e.g. 512 8 black)"
+              aria-label="Find in stock list"
+              style={{ padding: '12px 14px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '15px', width: '100%', boxSizing: 'border-box' }}
+            />
             <div style={{ backgroundColor: '#ffffff', borderRadius: '10px', border: '1px solid #e2e8f0', boxShadow: '0 1px 3px rgba(0,0,0,0.05)', overflowX: 'auto' }}>
               <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', minWidth: '850px' }}>
                 <thead>
@@ -2002,7 +2013,10 @@ export default function App() {
                   </tr>
                 </thead>
                 <tbody>
-                  {Object.entries(inventoryByArticle).flatMap(([articleNumber, variants]) => [
+                  {Object.entries(inventoryByArticle)
+                    .map(([articleNumber, variants]) => [articleNumber, variants.filter(p => productMatches(p, inventorySearch))])
+                    .filter(([, variants]) => variants.length > 0)
+                    .flatMap(([articleNumber, variants]) => [
                     <tr key={`article-${articleNumber}`} style={{ backgroundColor: '#ede9fe', borderBottom: '1px solid #ddd6fe' }}>
                       <td colSpan="7" style={{ padding: '10px 14px', fontWeight: '800', color: '#5b21b6' }}>
                         Parent Article: {articleNumber} <span style={{ fontWeight: '600', color: '#6b7280' }}>({variants.length} child variant{variants.length === 1 ? '' : 's'})</span>
@@ -2672,19 +2686,14 @@ export default function App() {
 
                 return (
                   <div key={index} style={{ display: 'flex', gap: '10px', marginBottom: '12px', alignItems: 'center', flexWrap: 'wrap', backgroundColor: '#f8fafc', padding: '12px', borderRadius: '8px', border: '1px solid #e2e8f0' }}>
-                    <select
-                      value={item.productId ? item.productId.toString() : ''}
-                      onChange={e => handleCartItemChange(index, 'productId', e.target.value)}
-                      style={{ padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '14px', flex: '2', minWidth: '200px', backgroundColor: '#fff', color: '#0f172a' }}
-                      required
-                    >
-                      <option value="">-- Select Article No & ID --</option>
-                      {inventory.map(p => (
-                        <option key={p.id} value={p.id.toString()}>
-                          ID: #{p.id} | Article: {p.articleNumber || p.model} | {p.model} (Size: {p.size || 'N/A'}{p.color ? `, ${p.color}` : ''}) — Stock: {p.qty || 0} pairs
-                        </option>
-                      ))}
-                    </select>
+                    <div style={{ flex: '2', minWidth: '240px' }}>
+                      <ArticlePicker
+                        products={inventoryWithTrueStock}
+                        value={item.productId}
+                        onChange={product => handleCartItemChange(index, 'productId', String(product.id))}
+                        priceOf={product => getProductPrice(product, saleCustomerRegion)}
+                      />
+                    </div>
 
                     <input
                       type="number"
@@ -2865,18 +2874,15 @@ export default function App() {
 
             <form onSubmit={handleAddProduction} style={{ backgroundColor: '#ffffff', padding: '20px', borderRadius: '10px', border: '1px solid #e2e8f0', boxShadow: '0 1px 3px rgba(0,0,0,0.05)', display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '12px' }}>
               <input type="date" value={newProduction.date} onChange={e => setNewProduction({ ...newProduction, date: e.target.value })} required style={{ padding: '10px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '14px' }} />
-              <input
-                type="text"
-                list="production-articles"
-                placeholder="Article Number"
+              <ArticlePicker
+                mode="article"
+                allowNew
+                products={inventoryWithTrueStock}
+                extraArticles={productionRecords.map(p => p.articleNumber)}
                 value={newProduction.articleNumber}
-                onChange={e => setNewProduction({ ...newProduction, articleNumber: e.target.value })}
-                required
-                style={{ padding: '10px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '14px' }}
+                onChange={articleNumber => setNewProduction(prev => ({ ...prev, articleNumber }))}
+                placeholder="Search article no…"
               />
-              <datalist id="production-articles">
-                {Object.keys(inventoryByArticle).map(a => <option key={a} value={a} />)}
-              </datalist>
               {productionSizes ? (
                 <>
                   <input type="text" readOnly aria-label="Dozens (from sizes)" value={`${sizeTotals(productionSizes).dozens} dozens`} style={{ padding: '10px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '14px', backgroundColor: '#f8fafc', color: '#475569' }} />
@@ -2977,6 +2983,7 @@ export default function App() {
             <RecipesPanel
               token={token}
               rawMaterials={rawMaterials}
+              products={inventoryWithTrueStock}
               articles={[...new Set([...Object.keys(inventoryByArticle), ...productionRecords.map(p => p.articleNumber)])].filter(Boolean).sort()}
             />
 

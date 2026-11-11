@@ -422,3 +422,7 @@ th.em-num .em-sort { justify-content: flex-end; }
 .em-table.em-pl td:first-child { width: 70%; }
 .em-pl-total td { font-weight: 700; background: #f8fafc; }
 .em-pl-result td { font-weight: 800; font-size: 16px; background: #faf5f8; }
+
+/* Edit bill: the article & size search gets more room */
+.em-eb-article { grid-column: span 2; }
+@media (max-width: 560px) { .em-eb-article { grid-column: 1 / -1; } }
