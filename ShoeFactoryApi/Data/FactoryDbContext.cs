@@ -39,6 +39,8 @@ namespace ShoeFactoryApi.Data
         public DbSet<Supplier> Suppliers => Set<Supplier>();
         public DbSet<SupplierPayment> SupplierPayments => Set<SupplierPayment>();
         public DbSet<SalesReturn> SalesReturns => Set<SalesReturn>();
+        public DbSet<WageRate> WageRates => Set<WageRate>();
+        public DbSet<WeeklySettlement> WeeklySettlements => Set<WeeklySettlement>();
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
@@ -139,6 +141,14 @@ namespace ShoeFactoryApi.Data
             modelBuilder.Entity<SalesReturn>().Property(r => r.Total).HasPrecision(18, 2);
             modelBuilder.Entity<SalesReturn>().HasIndex(r => r.SaleId);
             modelBuilder.Entity<SalesReturn>().HasIndex(r => r.CustomerId);
+
+            // ===== Piece-rate wages =====
+            modelBuilder.Entity<WagePayment>().Property(p => p.Kind).HasMaxLength(20).HasDefaultValue(WagePaymentKinds.Advance);
+            modelBuilder.Entity<WageRate>().Property(r => r.RatePerDozen).HasPrecision(18, 2);
+            modelBuilder.Entity<WageRate>().HasIndex(r => r.WorkerId);
+            modelBuilder.Entity<WeeklySettlement>().HasIndex(s => new { s.WorkerId, s.WeekStart }).IsUnique();
+            foreach (var p in new[] { "Earned", "Advances", "CarryIn", "Final", "Paid", "CarryOut" })
+                modelBuilder.Entity<WeeklySettlement>().Property(p).HasPrecision(18, 2);
 
             // ===== Audit log =====
             modelBuilder.Entity<AuditLog>().HasIndex(a => a.At);

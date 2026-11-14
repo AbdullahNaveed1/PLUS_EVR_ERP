@@ -246,6 +246,9 @@ namespace ShoeFactoryApi.Controllers
             if (payment.WorkerId <= 0 || payment.Amount <= 0) return BadRequest("Worker and a positive amount are required.");
             if (!await _context.Workers.AnyAsync(worker => worker.Id == payment.WorkerId)) return NotFound("Worker not found.");
             payment.Id = 0;
+            // Payments entered here are advances / daily wages; Saturday settlements come from the weekly sheet
+            payment.Kind = WagePaymentKinds.Advance;
+            payment.PaymentDate = DateTime.SpecifyKind(payment.PaymentDate, DateTimeKind.Utc);
             _context.WagePayments.Add(payment);
             await _context.SaveChangesAsync();
             await _context.Entry(payment).Reference(item => item.Worker).LoadAsync();

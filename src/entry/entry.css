@@ -450,3 +450,10 @@ th.em-num .em-sort { justify-content: flex-end; }
   .em-table.em-ledger .em-items { min-width: 0; }
   .em-table.em-ledger > tbody > tr > td:first-child { white-space: nowrap; font-size: 12px; }
 }
+
+/* ---------- Weekly thekka wages ---------- */
+.em-wage-sum { display: flex; flex-direction: column; gap: 6px; margin-top: 12px; padding: 12px 14px; border-radius: 10px; background: #f8fafc; border: 1px solid #e2e8f0; }
+.em-wage-sum > div { display: flex; justify-content: space-between; gap: 12px; font-size: 14px; }
+.em-wage-sum > div > span { color: #475569; }
+.em-wage-final { border-top: 1px solid #cbd5e1; padding-top: 8px; margin-top: 4px; font-size: 18px !important; }
+.em-wage-final strong { color: #714B67; font-size: 22px; }

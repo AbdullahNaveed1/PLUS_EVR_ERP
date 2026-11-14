@@ -31,6 +31,7 @@ namespace ShoeFactoryApi.Auth
             ["Expenses"] = new[] { "expenses" },
             ["Wages"] = new[] { "wages" },
             ["Workers"] = new[] { "wages" },
+            ["WeeklyWages"] = new[] { "wages" },
             ["Suppliers"] = new[] { "suppliers" },
             ["SalesReturns"] = new[] { "sales" }
         };

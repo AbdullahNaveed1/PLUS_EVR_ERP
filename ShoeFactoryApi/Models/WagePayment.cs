@@ -8,6 +8,9 @@ namespace ShoeFactoryApi.Models
         public DateTime PaymentDate { get; set; } = DateTime.UtcNow;
         public string Notes { get; set; } = string.Empty;
 
+        // "advance" (daily wage taken during the week, deducted on payday) or "settlement" (the payday payment)
+        public string Kind { get; set; } = WagePaymentKinds.Advance;
+
         public Worker? Worker { get; set; }
     }
 }

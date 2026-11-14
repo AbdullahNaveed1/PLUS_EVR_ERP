@@ -36,6 +36,8 @@ namespace ShoeFactoryApi.Services
                 Suppliers = await db.Suppliers.AsNoTracking().ToListAsync(),
                 SupplierPayments = await db.SupplierPayments.AsNoTracking().ToListAsync(),
                 SalesReturns = await db.SalesReturns.AsNoTracking().ToListAsync(),
+                WageRates = await db.WageRates.AsNoTracking().ToListAsync(),
+                WeeklySettlements = await db.WeeklySettlements.AsNoTracking().ToListAsync(),
                 // Logins only, never password hashes
                 Users = await db.Users.AsNoTracking().Select(u => new { u.Id, u.Username, u.Role, u.AllowedTabs }).ToListAsync(),
                 AuditLogs = await db.AuditLogs.AsNoTracking().OrderBy(a => a.Id).ToListAsync()

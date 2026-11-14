@@ -15,6 +15,7 @@ import ArticlePicker from './common/ArticlePicker'
 import { productMatches } from './common/articleSearch'
 import UsersPage from './admin/UsersPage'
 import ProfitPage from './reports/ProfitPage'
+import WeeklyWagesPanel from './wages/WeeklyWagesPanel'
 import AuditPage from './admin/AuditPage'
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || ''
@@ -209,12 +210,6 @@ export default function App() {
   const [customerDescriptionInputs, setCustomerDescriptionInputs] = useState({})
   const [newWorker, setNewWorker] = useState({ name: '', phone: '', role: '' })
   const [newWagePayment, setNewWagePayment] = useState({ workerId: '', amount: '', paymentDate: new Date().toISOString().split('T')[0], notes: '' })
-  const [productionWageRange, setProductionWageRange] = useState({
-    startDate: new Date(Date.now() - 6 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
-    endDate: new Date().toISOString().split('T')[0]
-  })
-  const [productionWageReport, setProductionWageReport] = useState(null)
-  const [wageReportStatus, setWageReportStatus] = useState('')
 
   const [selectedCustomerId, setSelectedCustomerId] = useState('')
   const [saleCustomerName, setSaleCustomerName] = useState('')
@@ -275,12 +270,6 @@ export default function App() {
       fetchAllData()
     }
   }, [token])
-
-  useEffect(() => {
-    if (token) {
-      fetchProductionWageReport(productionWageRange.startDate, productionWageRange.endDate)
-    }
-  }, [token, productionWageRange.startDate, productionWageRange.endDate])
 
   const authHeaders = () => ({ Authorization: `Bearer ${token}` })
 
@@ -578,63 +567,6 @@ export default function App() {
     }, { headers: authHeaders() })
     setNewWagePayment({ workerId: '', amount: '', paymentDate: new Date().toISOString().split('T')[0], notes: '' })
     fetchAllData()
-  }
-
-  const fetchProductionWageReport = async (startDate, endDate) => {
-    if (!startDate || !endDate) return
-    try {
-      const response = await axios.get(`${API_BASE_URL}/api/wages/production?startDate=${encodeURIComponent(startDate)}&endDate=${encodeURIComponent(endDate)}`, { headers: authHeaders() })
-      setProductionWageReport(response.data)
-      setWageReportStatus('')
-    } catch (err) {
-      console.error('Error loading production wage report:', err)
-      setWageReportStatus(err.response?.data?.message || 'Failed to calculate production wages.')
-    }
-  }
-
-  const saveProductionWageReport = async () => {
-    if (!productionWageRange.startDate || !productionWageRange.endDate) return
-    try {
-      const response = await axios.post(`${API_BASE_URL}/api/wages/production/report`, {
-        startDate: productionWageRange.startDate,
-        endDate: productionWageRange.endDate
-      }, { headers: authHeaders() })
-      setProductionWageReport(response.data)
-      setWageReportStatus('Production wages saved to payroll ledger.')
-      fetchAllData()
-    } catch (err) {
-      console.error('Error saving production wage report:', err)
-      setWageReportStatus(err.response?.data?.message || 'Failed to save production wages.')
-    }
-  }
-
-  const exportProductionWageReport = () => {
-    if (!productionWageReport) return
-
-    const rows = [
-      ['Date Range', `${productionWageReport.startDate} to ${productionWageReport.endDate}`],
-      ['Total Dozens Produced', productionWageReport.totalDozens],
-      ['Machine Man Wages', productionWageReport.machineAmount],
-      ['Safai & Packing Wages', productionWageReport.safaiAmount],
-      ['Total Labour Wages', productionWageReport.totalLabor],
-      [],
-      ['Article', 'Dozens']
-    ]
-
-    if (Array.isArray(productionWageReport.perArticle)) {
-      productionWageReport.perArticle.forEach(item => {
-        rows.push([item.article, item.dozens])
-      })
-    }
-
-    const csv = rows.map(row => row.map(value => `"${String(value ?? '').replace(/"/g, '""')}"`).join(',')).join('\n')
-    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' })
-    const url = URL.createObjectURL(blob)
-    const link = document.createElement('a')
-    link.href = url
-    link.download = `production-wages-${productionWageRange.startDate}-to-${productionWageRange.endDate}.csv`
-    link.click()
-    URL.revokeObjectURL(url)
   }
 
   const handleDeleteProduct = async (id) => {
@@ -3095,80 +3027,13 @@ export default function App() {
 
         {currentTab === 'wages' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-            <div style={{ backgroundColor: '#ffffff', padding: '20px', borderRadius: '12px', border: '1px solid #e2e8f0', boxShadow: '0 1px 3px rgba(15, 23, 42, 0.06)' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', flexWrap: 'wrap', marginBottom: '16px' }}>
-                <div>
-                  <h2 style={{ margin: 0, fontSize: '22px', fontWeight: '800', color: '#0f172a' }}>Production Labour Payroll</h2>
-                  <p style={{ margin: '6px 0 0 0', fontSize: '13px', color: '#64748b' }}>Machine man + safai & packing wages calculated from production records.</p>
-                </div>
-                <span style={{ backgroundColor: '#ecfeff', color: '#0f766e', border: '1px solid #a7f3d0', padding: '6px 12px', borderRadius: '999px', fontSize: '12px', fontWeight: '700' }}>Pkr labour summary</span>
-              </div>
-
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '12px', marginBottom: '18px' }}>
-                <div style={{ backgroundColor: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '10px', padding: '16px' }}>
-                  <p style={{ margin: 0, fontSize: '11px', letterSpacing: '0.5px', color: '#64748b', fontWeight: '700' }}>TOTAL DOZENS</p>
-                  <p style={{ margin: '8px 0 0', fontSize: '28px', fontWeight: '800', color: '#0f172a' }}>{Number(productionWageReport?.totalDozens || 0).toFixed(2)}</p>
-                </div>
-                <div style={{ backgroundColor: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: '10px', padding: '16px' }}>
-                  <p style={{ margin: 0, fontSize: '11px', letterSpacing: '0.5px', color: '#1d4ed8', fontWeight: '700' }}>MACHINE MAN (38/dozen)</p>
-                  <p style={{ margin: '8px 0 0', fontSize: '28px', fontWeight: '800', color: '#1d4ed8' }}>Rs. {Number(productionWageReport?.machineAmount || 0).toLocaleString()}</p>
-                </div>
-                <div style={{ backgroundColor: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: '10px', padding: '16px' }}>
-                  <p style={{ margin: 0, fontSize: '11px', letterSpacing: '0.5px', color: '#15803d', fontWeight: '700' }}>SAFAI & PACKING (50/dozen)</p>
-                  <p style={{ margin: '8px 0 0', fontSize: '28px', fontWeight: '800', color: '#15803d' }}>Rs. {Number(productionWageReport?.safaiAmount || 0).toLocaleString()}</p>
-                </div>
-                <div style={{ backgroundColor: '#fff7ed', border: '1px solid #fed7aa', borderRadius: '10px', padding: '16px' }}>
-                  <p style={{ margin: 0, fontSize: '11px', letterSpacing: '0.5px', color: '#c2410c', fontWeight: '700' }}>TOTAL LABOUR</p>
-                  <p style={{ margin: '8px 0 0', fontSize: '28px', fontWeight: '800', color: '#c2410c' }}>Rs. {Number(productionWageReport?.totalLabor || 0).toLocaleString()}</p>
-                </div>
-              </div>
-
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: '12px', marginBottom: '14px' }}>
-                <div>
-                  <label style={{ display: 'block', marginBottom: '6px', fontSize: '12px', fontWeight: '700', color: '#475569' }}>Start Date</label>
-                  <input type="date" value={productionWageRange.startDate} onChange={e => setProductionWageRange({ ...productionWageRange, startDate: e.target.value })} style={{ width: '100%', padding: '10px', borderRadius: '6px', border: '1px solid #cbd5e1', boxSizing: 'border-box' }} />
-                </div>
-                <div>
-                  <label style={{ display: 'block', marginBottom: '6px', fontSize: '12px', fontWeight: '700', color: '#475569' }}>End Date</label>
-                  <input type="date" value={productionWageRange.endDate} onChange={e => setProductionWageRange({ ...productionWageRange, endDate: e.target.value })} style={{ width: '100%', padding: '10px', borderRadius: '6px', border: '1px solid #cbd5e1', boxSizing: 'border-box' }} />
-                </div>
-                <div style={{ display: 'flex', alignItems: 'end', gap: '8px' }}>
-                  <button type="button" onClick={() => fetchProductionWageReport(productionWageRange.startDate, productionWageRange.endDate)} style={{ flex: 1, backgroundColor: '#714B67', color: '#fff', border: 'none', borderRadius: '6px', padding: '10px 12px', fontWeight: '700', cursor: 'pointer' }}>Calculate</button>
-                  <button type="button" onClick={saveProductionWageReport} style={{ flex: 1, backgroundColor: '#16a34a', color: '#fff', border: 'none', borderRadius: '6px', padding: '10px 12px', fontWeight: '700', cursor: 'pointer' }}>Save to Payroll</button>
-                  <button type="button" onClick={exportProductionWageReport} style={{ flex: 1, backgroundColor: '#2563eb', color: '#fff', border: 'none', borderRadius: '6px', padding: '10px 12px', fontWeight: '700', cursor: 'pointer' }}>Export CSV</button>
-                </div>
-              </div>
-
-              {wageReportStatus && <div style={{ marginBottom: '12px', padding: '10px 12px', borderRadius: '8px', backgroundColor: wageReportStatus.toLowerCase().includes('failed') || wageReportStatus.toLowerCase().includes('error') ? '#fef2f2' : '#ecfdf5', border: `1px solid ${wageReportStatus.toLowerCase().includes('failed') || wageReportStatus.toLowerCase().includes('error') ? '#fecaca' : '#a7f3d0'}`, color: wageReportStatus.toLowerCase().includes('failed') || wageReportStatus.toLowerCase().includes('error') ? '#991b1b' : '#166534', fontWeight: '600', fontSize: '13px' }}>{wageReportStatus}</div>}
-
-              {productionWageReport && (
-                <div style={{ borderTop: '1px solid #e2e8f0', paddingTop: '16px' }}>
-                  <p style={{ margin: '0 0 8px', fontSize: '13px', color: '#475569' }}><strong>Range:</strong> {productionWageReport.startDate} to {productionWageReport.endDate}</p>
-                  <div style={{ overflowX: 'auto' }}>
-                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
-                      <thead>
-                        <tr style={{ backgroundColor: '#f8fafc', color: '#475569', fontWeight: '700' }}>
-                          <th style={{ textAlign: 'left', padding: '10px', borderBottom: '1px solid #e2e8f0' }}>Article</th>
-                          <th style={{ textAlign: 'right', padding: '10px', borderBottom: '1px solid #e2e8f0' }}>Dozens</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {Array.isArray(productionWageReport.perArticle) && productionWageReport.perArticle.length > 0 ? (
-                          productionWageReport.perArticle.map(item => (
-                            <tr key={item.article} style={{ borderBottom: '1px solid #f1f5f9' }}>
-                              <td style={{ padding: '10px' }}>{item.article}</td>
-                              <td style={{ padding: '10px', textAlign: 'right', fontWeight: '600' }}>{Number(item.dozens).toFixed(2)}</td>
-                            </tr>
-                          ))
-                        ) : (
-                          <tr><td colSpan="2" style={{ padding: '12px', color: '#64748b', textAlign: 'center' }}>No production entries in this range.</td></tr>
-                        )}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              )}
-            </div>
+            <WeeklyWagesPanel
+              token={token}
+              workers={workers}
+              products={inventoryWithTrueStock}
+              isAdmin={role === 'Admin'}
+              onPaymentsChanged={fetchAllData}
+            />
 
             <form onSubmit={handleAddWorker} style={{ backgroundColor: '#ffffff', padding: '20px', borderRadius: '10px', border: '1px solid #e2e8f0', display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '12px' }}>
               <input type="text" placeholder="Worker name" value={newWorker.name} onChange={e => setNewWorker({ ...newWorker, name: e.target.value })} required style={{ padding: '10px', borderRadius: '6px', border: '1px solid #cbd5e1' }} />
@@ -3182,17 +3047,17 @@ export default function App() {
                 <option value="">Select worker</option>
                 {workers.map(worker => <option key={worker.id} value={worker.id}>{worker.name} {worker.role ? `(${worker.role})` : ''}</option>)}
               </select>
-              <input type="number" min="1" placeholder="Amount paid" value={newWagePayment.amount} onChange={e => setNewWagePayment({ ...newWagePayment, amount: e.target.value })} required style={{ padding: '10px', borderRadius: '6px', border: '1px solid #cbd5e1' }} />
+              <input type="number" min="1" placeholder="Advance / daily wage amount" value={newWagePayment.amount} onChange={e => setNewWagePayment({ ...newWagePayment, amount: e.target.value })} required style={{ padding: '10px', borderRadius: '6px', border: '1px solid #cbd5e1' }} />
               <input type="date" value={newWagePayment.paymentDate} onChange={e => setNewWagePayment({ ...newWagePayment, paymentDate: e.target.value })} required style={{ padding: '10px', borderRadius: '6px', border: '1px solid #cbd5e1' }} />
               <input type="text" placeholder="Notes" value={newWagePayment.notes} onChange={e => setNewWagePayment({ ...newWagePayment, notes: e.target.value })} style={{ padding: '10px', borderRadius: '6px', border: '1px solid #cbd5e1' }} />
-              <button type="submit" style={{ backgroundColor: '#16a34a', color: '#fff', border: 'none', borderRadius: '6px', fontWeight: '700', cursor: 'pointer' }}>+ Record Payment</button>
+              <button type="submit" style={{ backgroundColor: '#16a34a', color: '#fff', border: 'none', borderRadius: '6px', fontWeight: '700', cursor: 'pointer' }}>+ Record Advance</button>
             </form>
 
             <div style={{ backgroundColor: '#ffffff', borderRadius: '10px', border: '1px solid #e2e8f0', overflowX: 'auto' }}>
               <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', minWidth: '650px' }}>
                 <thead><tr style={{ backgroundColor: '#f1f5f9', fontSize: '12px', color: '#475569', textTransform: 'uppercase' }}><th style={{ padding: '14px' }}>Date</th><th style={{ padding: '14px' }}>Worker</th><th style={{ padding: '14px' }}>Role</th><th style={{ padding: '14px' }}>Notes</th><th style={{ padding: '14px' }}>Amount Paid</th></tr></thead>
                 <tbody>
-                  {wagePayments.map(payment => <tr key={payment.id} style={{ borderBottom: '1px solid #f1f5f9', fontSize: '14px' }}><td style={{ padding: '14px' }}>{payment.paymentDate ? payment.paymentDate.split('T')[0] : '-'}</td><td style={{ padding: '14px', fontWeight: '700' }}>{payment.worker?.name || workers.find(worker => worker.id === payment.workerId)?.name || 'Unknown'}</td><td style={{ padding: '14px' }}>{payment.worker?.role || workers.find(worker => worker.id === payment.workerId)?.role || '-'}</td><td style={{ padding: '14px' }}>{payment.notes || '-'}</td><td style={{ padding: '14px', color: '#dc2626', fontWeight: '700' }}>Rs. {Number(payment.amount || 0).toLocaleString()}</td></tr>)}
+                  {wagePayments.map(payment => <tr key={payment.id} style={{ borderBottom: '1px solid #f1f5f9', fontSize: '14px' }}><td style={{ padding: '14px' }}>{payment.paymentDate ? payment.paymentDate.split('T')[0] : '-'}</td><td style={{ padding: '14px', fontWeight: '700' }}>{payment.worker?.name || workers.find(worker => worker.id === payment.workerId)?.name || 'Unknown'}</td><td style={{ padding: '14px' }}>{payment.worker?.role || workers.find(worker => worker.id === payment.workerId)?.role || '-'}</td><td style={{ padding: '14px' }}><span style={{ fontSize: '11px', fontWeight: '700', padding: '2px 8px', borderRadius: '999px', marginRight: '6px', backgroundColor: payment.kind === 'settlement' ? '#dcfce7' : '#fef3c7', color: payment.kind === 'settlement' ? '#166534' : '#92400e' }}>{payment.kind === 'settlement' ? 'Saturday pay' : 'Advance'}</span>{payment.notes || ''}</td><td style={{ padding: '14px', color: '#dc2626', fontWeight: '700' }}>Rs. {Number(payment.amount || 0).toLocaleString()}</td></tr>)}
                   {wagePayments.length === 0 && <tr><td colSpan="5" style={{ padding: '20px', textAlign: 'center', color: '#64748b' }}>No wage payments recorded.</td></tr>}
                 </tbody>
               </table>
