@@ -1682,7 +1682,7 @@ export default function App() {
     { id: 'reports', label: '📊 گاہک کی رپورٹ (Reports)' },
     { id: 'suppliers', label: '🚚 Suppliers' },
     { id: 'expenses', label: 'Expenses' },
-    { id: 'wages', label: 'Daily Wages' },
+    { id: 'wages', label: '👷 Labour Hisab' },
     { id: 'balancesheet', label: 'Balance Sheet' }
   ]
   const adminTabs = [
@@ -3027,6 +3027,7 @@ export default function App() {
 
         {currentTab === 'wages' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+            <h2 style={{ margin: 0, fontSize: '18px', fontWeight: '700', color: '#1e293b' }}>👷 Labour Hisab</h2>
             <WeeklyWagesPanel
               token={token}
               workers={workers}
@@ -3035,6 +3036,8 @@ export default function App() {
               onPaymentsChanged={fetchAllData}
             />
 
+            <h3 style={{ margin: '8px 0 0', fontSize: '16px', fontWeight: '700', color: '#1e293b' }}>Workers, advances &amp; daily wages</h3>
+            <p style={{ margin: '-14px 0 0', fontSize: '13px', color: '#64748b' }}>Every advance recorded here is deducted on that week's Saturday hisab.</p>
             <form onSubmit={handleAddWorker} style={{ backgroundColor: '#ffffff', padding: '20px', borderRadius: '10px', border: '1px solid #e2e8f0', display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '12px' }}>
               <input type="text" placeholder="Worker name" value={newWorker.name} onChange={e => setNewWorker({ ...newWorker, name: e.target.value })} required style={{ padding: '10px', borderRadius: '6px', border: '1px solid #cbd5e1' }} />
               <input type="text" placeholder="Phone" value={newWorker.phone} onChange={e => setNewWorker({ ...newWorker, phone: e.target.value })} style={{ padding: '10px', borderRadius: '6px', border: '1px solid #cbd5e1' }} />

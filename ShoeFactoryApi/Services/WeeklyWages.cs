@@ -13,9 +13,10 @@ namespace ShoeFactoryApi.Services
     /// </summary>
     public static class WeeklyWages
     {
-        // Everything before this day was already settled by hand (WAGES_START_DATE overrides it)
+        // First week counted is 09-11-2026 to 13-11-2026; production and advances before 9 November
+        // were settled by hand (WAGES_START_DATE overrides it)
         public static DateOnly StartDate =>
-            DateOnly.TryParse(Environment.GetEnvironmentVariable("WAGES_START_DATE"), out var d) ? d : new DateOnly(2026, 11, 13);
+            DateOnly.TryParse(Environment.GetEnvironmentVariable("WAGES_START_DATE"), out var d) ? d : new DateOnly(2026, 11, 9);
 
         private const int MaxWeeksBack = 52;
 
