@@ -91,11 +91,14 @@ namespace ShoeFactoryApi.Services
             }
 
             var advStart = from.ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc);
+            // Advances marked CountInHisab count from the Saturday even if before the start date (5h margin for Pakistan time)
+            var weekStartAt = weekStart.ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc).AddHours(-5);
             var advEnd = weekEnd.AddDays(1).ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc);
             var advances = from > weekEnd
                 ? new List<Advance>()
                 : (await db.WagePayments.AsNoTracking()
-                    .Where(p => p.WorkerId == workerId && p.Kind != WagePaymentKinds.Settlement && p.PaymentDate >= advStart && p.PaymentDate < advEnd)
+                    .Where(p => p.WorkerId == workerId && p.Kind != WagePaymentKinds.Settlement && p.PaymentDate < advEnd &&
+                                (p.PaymentDate >= advStart || (p.CountInHisab && p.PaymentDate >= weekStartAt)))
                     .OrderBy(p => p.PaymentDate).ToListAsync())
                     .Select(p => new Advance(p.Id, DateOnly.FromDateTime(p.PaymentDate), p.Amount, p.Notes)).ToList();
 

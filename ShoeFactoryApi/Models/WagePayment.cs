@@ -11,6 +11,9 @@ namespace ShoeFactoryApi.Models
         // "advance" (daily wage taken during the week, deducted on payday) or "settlement" (the payday payment)
         public string Kind { get; set; } = WagePaymentKinds.Advance;
 
+        // Advance dated before the wages start date that still comes off its week's hisab
+        public bool CountInHisab { get; set; }
+
         public Worker? Worker { get; set; }
     }
 }
