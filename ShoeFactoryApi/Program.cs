@@ -120,13 +120,23 @@ using (var scope = app.Services.CreateScope())
 }
 
 app.UseCors("AllowAll");
+// index.html is checked with the server on every load so an update shows at once;
+// the hashed assets/ files it points to can stay cached
+var staticFiles = new StaticFileOptions
+{
+    OnPrepareResponse = ctx =>
+    {
+        if (ctx.File.Name.EndsWith(".html", StringComparison.OrdinalIgnoreCase))
+            ctx.Context.Response.Headers.CacheControl = "no-cache";
+    }
+};
 app.UseDefaultFiles();
-app.UseStaticFiles();
+app.UseStaticFiles(staticFiles);
 app.UseAuthentication();
 app.UseAuthorization();
 app.MapControllers();
 
 // Backups (download, email now, status) are in BackupController, Admin only
 
-app.MapFallbackToFile("index.html");
+app.MapFallbackToFile("index.html", staticFiles);
 app.Run();
