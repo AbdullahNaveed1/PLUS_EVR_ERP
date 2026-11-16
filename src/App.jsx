@@ -723,7 +723,16 @@ export default function App() {
       await fetchAllData()
     } catch (err) {
       console.error('Error saving bill:', err)
-      alert('The bill could not be saved to the database.')
+      const status = err.response?.status
+      if (status === 401) {
+        // Signing out keeps the form filled in, so the same bill can be saved after signing in
+        alert('Your sign-in has expired, so the bill was NOT saved.\n\nSign in again: the bill stays filled in. Then press Finalize Bill again.')
+        handleLogout()
+      } else if (!err.response) {
+        alert('The bill was NOT saved: the server could not be reached. Check the internet connection and press Finalize Bill again.')
+      } else {
+        alert(`The bill was NOT saved: ${err.response.data?.message || `server error ${status}`}`)
+      }
       return
     }
 
