@@ -18,6 +18,8 @@ namespace ShoeFactoryApi.Controllers
         private readonly FactoryDbContext _context;
         public SalesController(FactoryDbContext context) => _context = context;
 
+        private const int MaxStockAttempts = 5;
+
         [HttpGet]
         public async Task<ActionResult<IEnumerable<object>>> GetSales()
         {
@@ -45,10 +47,33 @@ namespace ShoeFactoryApi.Controllers
             if (!ApplyPayloadAndRecalculate(sale, payload, User.IsInRole("Admin"), out var error))
                 return BadRequest(new { message = error });
 
-            if (!skipStock) await MoveStock(null, PairsByProduct(sale.LineItemsJson));
-            _context.Sales.Add(sale);
-            await _context.SaveChangesAsync();
-            return CreatedAtAction(nameof(GetSale), new { id = sale.Id }, ToResponse(sale));
+            // A double-click or a retry sends the same bill again within seconds: keep only the first
+            if (!skipStock)
+            {
+                var from = sale.Date.AddMinutes(-2);
+                var to = sale.Date.AddMinutes(2);
+                if (await _context.Sales.AnyAsync(s => s.CustomerId == sale.CustomerId && s.BillNo == sale.BillNo && s.Total == sale.Total && s.Date >= from && s.Date <= to))
+                    return Conflict(new { message = $"Bill {sale.BillNo} for {sale.Customer} was already saved a moment ago. Check the bill list before saving it again." });
+            }
+
+            // Another bill changing the same stock at the same moment: read the stock again and retry,
+            // so the user only sees "save again" if it keeps clashing
+            for (var attempt = 1; ; attempt++)
+            {
+                try
+                {
+                    if (!skipStock) await MoveStock(null, PairsByProduct(sale.LineItemsJson));
+                    _context.Sales.Add(sale);
+                    await _context.SaveChangesAsync();
+                    return CreatedAtAction(nameof(GetSale), new { id = sale.Id }, ToResponse(sale));
+                }
+                catch (DbUpdateConcurrencyException) when (attempt < MaxStockAttempts)
+                {
+                    _context.ChangeTracker.Clear();
+                    sale.Id = 0;
+                    await Task.Delay(Random.Shared.Next(20, 120) * attempt);
+                }
+            }
         }
 
         // Admin only. Finished-goods stock moves by the difference in pairs per product,

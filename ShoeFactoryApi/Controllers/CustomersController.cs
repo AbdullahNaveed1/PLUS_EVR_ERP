@@ -35,6 +35,8 @@ namespace ShoeFactoryApi.Controllers
         [HttpPost]
         public async Task<ActionResult<Customer>> PostCustomer(Customer customer)
         {
+            if (await IdTaken(customer.Phone, null) is { } owner)
+                return BadRequest(new { message = $"ID {customer.Phone.Trim()} already belongs to {owner}. Each customer needs their own ID, or their bills mix into one khata." });
             _context.Customers.Add(customer);
             await _context.SaveChangesAsync();
             return CreatedAtAction(nameof(GetCustomer), new { id = customer.Id }, customer);
@@ -48,6 +50,8 @@ namespace ShoeFactoryApi.Controllers
 
             var existing = await _context.Customers.FirstOrDefaultAsync(c => c.Id == id);
             if (existing == null) return NotFound();
+            if (await IdTaken(customer.Phone, id) is { } owner)
+                return BadRequest(new { message = $"ID {customer.Phone.Trim()} already belongs to {owner}. Each customer needs their own ID, or their bills mix into one khata." });
 
             if (!string.IsNullOrWhiteSpace(customer.Name)) existing.Name = customer.Name;
             if (!string.IsNullOrWhiteSpace(customer.Phone)) existing.Phone = customer.Phone;
@@ -57,6 +61,17 @@ namespace ShoeFactoryApi.Controllers
 
             await _context.SaveChangesAsync();
             return NoContent();
+        }
+
+        // Name of another customer already using this ID (bills and payments find the khata by it), or null
+        private async Task<string?> IdTaken(string? phone, int? exceptId)
+        {
+            var key = phone?.Trim().ToLower();
+            if (string.IsNullOrEmpty(key)) return null;
+            return await _context.Customers
+                .Where(c => c.Id != exceptId && c.Phone.Trim().ToLower() == key)
+                .Select(c => c.Name)
+                .FirstOrDefaultAsync();
         }
 
         [HttpDelete("{id}")]

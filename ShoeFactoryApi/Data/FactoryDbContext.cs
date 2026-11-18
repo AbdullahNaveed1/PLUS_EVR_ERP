@@ -74,6 +74,10 @@ namespace ShoeFactoryApi.Data
                 .HasColumnType("jsonb");
 
             // Money precision
+            // Stock rows carry a version (PostgreSQL's xmin): if two saves change the same stock at once,
+            // the second is refused instead of silently overwriting the first
+            modelBuilder.Entity<Product>().Property<uint>("Version").IsRowVersion();
+            modelBuilder.Entity<RawMaterial>().Property<uint>("Version").IsRowVersion();
             modelBuilder.Entity<Product>().Property(p => p.PricePunjab).HasPrecision(18, 2);
             modelBuilder.Entity<Product>().Property(p => p.PriceSindh).HasPrecision(18, 2);
             modelBuilder.Entity<Sale>().Property(s => s.Total).HasPrecision(18, 2);
@@ -171,16 +175,18 @@ namespace ShoeFactoryApi.Data
 
         // ===== Audit: every add / edit / delete saved through this context is recorded =====
 
+        // A change and its audit rows are saved in one transaction: both or neither
         public override int SaveChanges(bool acceptAllChangesOnSuccess)
         {
             CheckClosedPeriods();
             var pending = CollectAudit();
+            if (pending.Count == 0) return base.SaveChanges(acceptAllChangesOnSuccess);
+
+            using var own = Database.CurrentTransaction == null ? Database.BeginTransaction() : null;
             var result = base.SaveChanges(acceptAllChangesOnSuccess);
-            if (pending.Count > 0)
-            {
-                AuditLogs.AddRange(pending.Select(p => p.ToLog()));
-                base.SaveChanges(acceptAllChangesOnSuccess);
-            }
+            AuditLogs.AddRange(pending.Select(p => p.ToLog()));
+            base.SaveChanges(acceptAllChangesOnSuccess);
+            own?.Commit();
             return result;
         }
 
@@ -188,12 +194,13 @@ namespace ShoeFactoryApi.Data
         {
             CheckClosedPeriods();
             var pending = CollectAudit();
+            if (pending.Count == 0) return await base.SaveChangesAsync(acceptAllChangesOnSuccess, cancellationToken);
+
+            await using var own = Database.CurrentTransaction == null ? await Database.BeginTransactionAsync(cancellationToken) : null;
             var result = await base.SaveChangesAsync(acceptAllChangesOnSuccess, cancellationToken);
-            if (pending.Count > 0)
-            {
-                AuditLogs.AddRange(pending.Select(p => p.ToLog()));
-                await base.SaveChangesAsync(acceptAllChangesOnSuccess, cancellationToken);
-            }
+            AuditLogs.AddRange(pending.Select(p => p.ToLog()));
+            await base.SaveChangesAsync(acceptAllChangesOnSuccess, cancellationToken);
+            if (own != null) await own.CommitAsync(cancellationToken);
             return result;
         }
 
@@ -265,7 +272,7 @@ namespace ShoeFactoryApi.Data
                         pending.Add(new PendingAudit(entry, "delete", user, Serialize(Values(entry, original: true))));
                         break;
                     case EntityState.Modified:
-                        var modified = entry.Properties.Where(p => p.IsModified).ToList();
+                        var modified = entry.Properties.Where(p => p.IsModified && !p.Metadata.IsConcurrencyToken).ToList();
                         // A record attached as "modified" without loading it has no real old values; read them from the database
                         var stored = modified.Count > 0 && modified.All(p => Equals(p.OriginalValue, p.CurrentValue))
                             ? entry.GetDatabaseValues()
@@ -282,7 +289,8 @@ namespace ShoeFactoryApi.Data
         }
 
         private static Dictionary<string, object?> Values(EntityEntry entry, bool original) =>
-            entry.Properties.ToDictionary(p => p.Metadata.Name, p => Mask(p, original ? p.OriginalValue : p.CurrentValue));
+            entry.Properties.Where(p => !p.Metadata.IsConcurrencyToken)
+                .ToDictionary(p => p.Metadata.Name, p => Mask(p, original ? p.OriginalValue : p.CurrentValue));
 
         // Password hashes are never copied into the log
         private static object? Mask(PropertyEntry property, object? value) =>

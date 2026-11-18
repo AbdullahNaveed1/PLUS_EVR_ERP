@@ -206,6 +206,13 @@ export default function App() {
   const [paymentInputs, setPaymentInputs] = useState({})
   // Customer ids whose cash payment is being saved; a ref so a fast double-click can't slip through
   const paymentSavingRef = useRef(new Set())
+  // Saves still running; a second click on the same form does nothing (double-clicks made duplicate entries)
+  const savingRef = useRef(new Set())
+  const runOnce = async (key, save, e) => {
+    if (savingRef.current.has(key)) { e?.preventDefault?.(); return }
+    savingRef.current.add(key)
+    try { return await save(e) } finally { savingRef.current.delete(key) }
+  }
   const [savingPaymentFor, setSavingPaymentFor] = useState(null)
   const [updateStockInputs, setUpdateStockInputs] = useState({})
   const [updatePriceInputs, setUpdatePriceInputs] = useState({})
@@ -581,7 +588,8 @@ export default function App() {
     fetchAllData()
   }
 
-  const handleAddWagePayment = async (e) => {
+  const handleAddWagePayment = (e) => runOnce('wagePayment', saveWagePaymentNow, e)
+  const saveWagePaymentNow = async (e) => {
     e.preventDefault()
     if (!newWagePayment.workerId || !newWagePayment.amount) return
     await axios.post(`${API_BASE_URL}/api/wages/payments`, {
@@ -640,7 +648,8 @@ export default function App() {
     }
   }
 
-  const handleAddExpense = async (e) => {
+  const handleAddExpense = (e) => runOnce('expense', saveExpenseNow, e)
+  const saveExpenseNow = async (e) => {
     e.preventDefault()
     if (!newExp.category || !newExp.amount) return
     try {
@@ -686,7 +695,8 @@ export default function App() {
     setCartItems(cartItems.filter((_, i) => i !== index))
   }
 
-  const handleGenerateMultiItemBill = async (e) => {
+  const handleGenerateMultiItemBill = (e) => runOnce('bill', saveBillNow, e)
+  const saveBillNow = async (e) => {
     e.preventDefault()
     if (!saleCustomerName || !saleCustomerUniqueId || cartItems.length === 0) return
     if (!billNo.trim()) {
@@ -1626,7 +1636,8 @@ export default function App() {
   }
 
   // ===== NEW: Production CRUD handlers (backend-backed) =====
-  const handleAddProduction = async (e) => {
+  const handleAddProduction = (e) => runOnce('production', saveProductionNow, e)
+  const saveProductionNow = async (e) => {
     e.preventDefault()
     if (!newProduction.articleNumber) return
     const variants = inventoryByArticle[newProduction.articleNumber.trim()] || []

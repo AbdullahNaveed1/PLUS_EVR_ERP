@@ -144,6 +144,12 @@ app.Use(async (context, next) =>
         context.Response.StatusCode = StatusCodes.Status400BadRequest;
         await context.Response.WriteAsJsonAsync(new { message = ex.Message, periodClosed = true });
     }
+    // Someone else changed the same stock at the same moment; nothing of this save was kept
+    catch (DbUpdateConcurrencyException) when (!context.Response.HasStarted)
+    {
+        context.Response.StatusCode = StatusCodes.Status409Conflict;
+        await context.Response.WriteAsJsonAsync(new { message = "Stock was changed by someone else at the same moment, so nothing was saved. Please save again." });
+    }
 });
 app.MapControllers();
 
