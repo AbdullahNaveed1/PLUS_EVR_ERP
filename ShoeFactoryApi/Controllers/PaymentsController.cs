@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using ShoeFactoryApi.Data;
 using ShoeFactoryApi.Models;
+using ShoeFactoryApi.Services;
 
 namespace ShoeFactoryApi.Controllers
 {
@@ -77,6 +78,18 @@ namespace ShoeFactoryApi.Controllers
 
             await _context.SaveChangesAsync();
             return Ok(existing);
+        }
+
+        // Staff cancel a mistaken payment instead of deleting it; it drops out of the khata
+        [HttpPost("{id}/cancel")]
+        public async Task<IActionResult> CancelPayment(int id, [FromBody] CancelInput input)
+        {
+            if (Cancellation.Validate(input) is { } invalid) return BadRequest(new { message = invalid });
+            var payment = await _context.Payments.FindAsync(id);
+            if (payment == null) return NotFound();
+            Cancellation.Apply(payment, User.Identity?.Name, input);
+            await _context.SaveChangesAsync();
+            return NoContent();
         }
 
         // DELETE: api/payments/5 — Admin only, used to remove duplicate or mistaken payments

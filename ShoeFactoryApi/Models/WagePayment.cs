@@ -1,6 +1,6 @@
 namespace ShoeFactoryApi.Models
 {
-    public class WagePayment
+    public class WagePayment : ICancellable
     {
         public int Id { get; set; }
         public int WorkerId { get; set; }
@@ -13,6 +13,11 @@ namespace ShoeFactoryApi.Models
 
         // Advance dated before the wages start date that still comes off its week's hisab
         public bool CountInHisab { get; set; }
+
+        // Set when cancelled instead of deleted (see ICancellable)
+        public DateTime? CancelledAt { get; set; }
+        public string? CancelledBy { get; set; }
+        public string? CancelReason { get; set; }
 
         public Worker? Worker { get; set; }
     }

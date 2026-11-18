@@ -9,6 +9,7 @@ using System.Text.Json;
 using ShoeFactoryApi.Data;
 using ShoeFactoryApi.Models;
 using ShoeFactoryApi.DTOs;
+using ShoeFactoryApi.Services;
 
 namespace ShoeFactoryApi.Controllers
 {
@@ -23,6 +24,14 @@ namespace ShoeFactoryApi.Controllers
         {
             _context = context;
             _configuration = configuration;
+        }
+
+        // Railway's proxy adds the caller's address as the last X-Forwarded-For entry; earlier entries can be faked
+        private string ClientAddress()
+        {
+            var forwarded = Request.Headers["X-Forwarded-For"].ToString();
+            var last = forwarded.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).LastOrDefault();
+            return last ?? HttpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown";
         }
 
         [Authorize(Roles = "Admin")]
@@ -52,8 +61,30 @@ namespace ShoeFactoryApi.Controllers
         [HttpPost("login")]
         public async Task<IActionResult> Login(LoginDto request)
         {
+            var address = ClientAddress();
+            var name = (request.Username ?? string.Empty).Trim();
+            var now = DateTime.UtcNow;
+            var blockedMinutes = LoginThrottle.MinutesBlocked(name, address, now);
+            if (blockedMinutes > 0)
+            {
+                _context.AuditLogs.Add(new AuditLog
+                {
+                    User = name,
+                    Action = "login_blocked",
+                    Entity = "User",
+                    Changes = JsonSerializer.Serialize(new { ip = address })
+                });
+                await _context.SaveChangesAsync();
+                return StatusCode(StatusCodes.Status429TooManyRequests, new
+                {
+                    message = $"Too many wrong passwords. Try again in {blockedMinutes} minute{(blockedMinutes == 1 ? "" : "s")}."
+                });
+            }
+
             var user = await _context.Users.FirstOrDefaultAsync(u => u.Username == request.Username);
             var valid = user != null && BCrypt.Net.BCrypt.Verify(request.Password, user.PasswordHash);
+            if (valid) LoginThrottle.Succeeded(name, address);
+            else LoginThrottle.Failed(name, address, now);
 
             // Every sign-in attempt is recorded; the password never is
             _context.AuditLogs.Add(new AuditLog
@@ -62,7 +93,7 @@ namespace ShoeFactoryApi.Controllers
                 Action = valid ? "login" : "login_failed",
                 Entity = "User",
                 EntityId = user?.Id.ToString(),
-                Changes = JsonSerializer.Serialize(new { ip = HttpContext.Connection.RemoteIpAddress?.ToString() })
+                Changes = JsonSerializer.Serialize(new { ip = address })
             });
             await _context.SaveChangesAsync();
 

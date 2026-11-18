@@ -6,7 +6,7 @@ using System.Text.Json.Serialization;
 
 namespace ShoeFactoryApi.Models
 {
-    public class ProductionRecord
+    public class ProductionRecord : ICancellable
     {
         [Key]
         public int Id { get; set; }
@@ -33,6 +33,11 @@ namespace ShoeFactoryApi.Models
         // Filled from SizesJson by the controller; null on input means "keep the saved sizes"
         [NotMapped]
         public List<ProductionSize>? Sizes { get; set; }
+
+        // Set when cancelled instead of deleted (see ICancellable)
+        public DateTime? CancelledAt { get; set; }
+        public string? CancelledBy { get; set; }
+        public string? CancelReason { get; set; }
     }
 
     public class ProductionSize

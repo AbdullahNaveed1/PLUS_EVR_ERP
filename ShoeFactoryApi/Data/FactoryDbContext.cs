@@ -41,6 +41,7 @@ namespace ShoeFactoryApi.Data
         public DbSet<SalesReturn> SalesReturns => Set<SalesReturn>();
         public DbSet<WageRate> WageRates => Set<WageRate>();
         public DbSet<WeeklySettlement> WeeklySettlements => Set<WeeklySettlement>();
+        public DbSet<ClosedPeriod> ClosedPeriods => Set<ClosedPeriod>();
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
@@ -154,12 +155,25 @@ namespace ShoeFactoryApi.Data
             modelBuilder.Entity<AuditLog>().HasIndex(a => a.At);
             modelBuilder.Entity<AuditLog>().HasIndex(a => a.Entity);
             modelBuilder.Entity<AuditLog>().HasIndex(a => a.User);
+
+            // ===== Cancelled records (Staff cancel instead of delete) are left out of every query =====
+            modelBuilder.Entity<Sale>().HasQueryFilter(e => e.CancelledAt == null);
+            modelBuilder.Entity<Payment>().HasQueryFilter(e => e.CancelledAt == null);
+            modelBuilder.Entity<Expense>().HasQueryFilter(e => e.CancelledAt == null);
+            modelBuilder.Entity<ProductionRecord>().HasQueryFilter(e => e.CancelledAt == null);
+            modelBuilder.Entity<WagePayment>().HasQueryFilter(e => e.CancelledAt == null);
+            foreach (var type in new[] { typeof(Sale), typeof(Payment), typeof(Expense), typeof(ProductionRecord), typeof(WagePayment) })
+            {
+                modelBuilder.Entity(type).Property(nameof(ICancellable.CancelledBy)).HasMaxLength(100);
+                modelBuilder.Entity(type).Property(nameof(ICancellable.CancelReason)).HasMaxLength(300);
+            }
         }
 
         // ===== Audit: every add / edit / delete saved through this context is recorded =====
 
         public override int SaveChanges(bool acceptAllChangesOnSuccess)
         {
+            CheckClosedPeriods();
             var pending = CollectAudit();
             var result = base.SaveChanges(acceptAllChangesOnSuccess);
             if (pending.Count > 0)
@@ -172,6 +186,7 @@ namespace ShoeFactoryApi.Data
 
         public override async Task<int> SaveChangesAsync(bool acceptAllChangesOnSuccess, CancellationToken cancellationToken = default)
         {
+            CheckClosedPeriods();
             var pending = CollectAudit();
             var result = await base.SaveChangesAsync(acceptAllChangesOnSuccess, cancellationToken);
             if (pending.Count > 0)
@@ -180,6 +195,54 @@ namespace ShoeFactoryApi.Data
                 await base.SaveChangesAsync(acceptAllChangesOnSuccess, cancellationToken);
             }
             return result;
+        }
+
+        // ===== Closed months: nothing dated in a closed month can be added, changed or removed =====
+
+        // The date that decides which month a record belongs to
+        private static string? PeriodDateProperty(object entity) => entity switch
+        {
+            Sale or Payment or Expense or ProductionRecord or SalesReturn or SupplierPayment or MaterialEntry or MaterialCount => "Date",
+            WagePayment => nameof(WagePayment.PaymentDate),
+            WeeklySettlement => nameof(WeeklySettlement.WeekStart),
+            _ => null
+        };
+
+        // Months follow Pakistan time (UTC+5): a bill saved at 1 AM on the 1st belongs to the new month
+        public static DateOnly MonthOf(object? value) => value switch
+        {
+            DateOnly d => new DateOnly(d.Year, d.Month, 1),
+            DateTime t => MonthOfUtc(t.Kind == DateTimeKind.Local ? t.ToUniversalTime() : t),
+            _ => DateOnly.MinValue
+        };
+
+        private static DateOnly MonthOfUtc(DateTime utc)
+        {
+            var pk = utc.AddHours(5);
+            return new DateOnly(pk.Year, pk.Month, 1);
+        }
+
+        private void CheckClosedPeriods()
+        {
+            var months = new HashSet<DateOnly>();
+            foreach (var entry in ChangeTracker.Entries())
+            {
+                if (entry.State is not (EntityState.Added or EntityState.Modified or EntityState.Deleted)) continue;
+                if (PeriodDateProperty(entry.Entity) is not { } name) continue;
+                var date = entry.Property(name);
+                if (entry.State != EntityState.Deleted) months.Add(MonthOf(date.CurrentValue));
+                if (entry.State == EntityState.Added) continue;
+                // A record attached as changed without loading it has no real old date; read it from the database
+                var attachedUnloaded = entry.State == EntityState.Modified &&
+                                       entry.Properties.Where(p => p.IsModified).All(p => Equals(p.OriginalValue, p.CurrentValue));
+                months.Add(MonthOf(attachedUnloaded ? entry.GetDatabaseValues()?[name] : date.OriginalValue));
+            }
+            months.Remove(DateOnly.MinValue);
+            if (months.Count == 0) return;
+
+            var list = months.ToList();
+            var closed = ClosedPeriods.AsNoTracking().Where(c => list.Contains(c.Month)).OrderBy(c => c.Month).Select(c => (DateOnly?)c.Month).FirstOrDefault();
+            if (closed != null) throw new PeriodClosedException(closed.Value);
         }
 
         private string CurrentUser => _httpContextAccessor?.HttpContext?.User?.Identity?.Name ?? "system";

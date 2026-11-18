@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using ShoeFactoryApi.Data;
 using ShoeFactoryApi.Models;
+using ShoeFactoryApi.Services;
 
 namespace ShoeFactoryApi.Controllers
 {
@@ -67,7 +68,20 @@ namespace ShoeFactoryApi.Controllers
             return NoContent();
         }
 
-        // DELETE: api/expenses/5
+        // Staff cancel a mistaken expense instead of deleting it
+        [HttpPost("{id}/cancel")]
+        public async Task<IActionResult> CancelExpense(int id, [FromBody] CancelInput input)
+        {
+            if (Cancellation.Validate(input) is { } invalid) return BadRequest(new { message = invalid });
+            var expense = await _context.Expenses.FindAsync(id);
+            if (expense == null) return NotFound();
+            Cancellation.Apply(expense, User.Identity?.Name, input);
+            await _context.SaveChangesAsync();
+            return NoContent();
+        }
+
+        // DELETE: api/expenses/5 — Admin only
+        [Authorize(Roles = "Admin")]
         [HttpDelete("{id}")]
         public async Task<IActionResult> DeleteExpense(int id)
         {

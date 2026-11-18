@@ -21,8 +21,6 @@ builder.Services.AddControllers(options => options.Filters.Add<ShoeFactoryApi.Au
             System.Text.Json.Serialization.ReferenceHandler.IgnoreCycles;
     });
 
-builder.Services.AddHostedService<DailyDatabaseBackupService>();
-
 // 2. PostgreSQL connection
 var connectionString = Environment.GetEnvironmentVariable("DATABASE_URL")
     ?? builder.Configuration.GetConnectionString("DefaultConnection")
@@ -75,6 +73,8 @@ builder.Services.AddScoped<IInventoryService, InventoryService>();
 
 // Nightly backup email; stays off until BACKUP_EMAIL_TO / SMTP_USER / SMTP_PASSWORD are set
 builder.Services.AddHostedService<BackupEmailService>();
+// Every Sunday: restores a fresh backup into a temporary schema and checks nothing is missing; emails on failure
+builder.Services.AddHostedService<RestoreTestService>();
 
 var app = builder.Build();
 
@@ -134,6 +134,20 @@ app.UseDefaultFiles();
 app.UseStaticFiles(staticFiles);
 app.UseAuthentication();
 app.UseAuthorization();
+
+// A save into a closed month is refused with a plain message instead of a server error
+app.Use(async (context, next) =>
+{
+    try
+    {
+        await next();
+    }
+    catch (PeriodClosedException ex) when (!context.Response.HasStarted)
+    {
+        context.Response.StatusCode = StatusCodes.Status400BadRequest;
+        await context.Response.WriteAsJsonAsync(new { message = ex.Message, periodClosed = true });
+    }
+});
 app.MapControllers();
 
 // Backups (download, email now, status) are in BackupController, Admin only

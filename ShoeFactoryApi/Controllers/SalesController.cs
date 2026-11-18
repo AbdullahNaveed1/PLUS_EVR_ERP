@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using Microsoft.AspNetCore.Authorization;
@@ -5,6 +6,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using ShoeFactoryApi.Data;
 using ShoeFactoryApi.Models;
+using ShoeFactoryApi.Services;
 
 namespace ShoeFactoryApi.Controllers
 {
@@ -107,6 +109,24 @@ namespace ShoeFactoryApi.Controllers
             return map;
         }
 
+        // Staff cancel a bill instead of deleting it: it stays on record (who, when, why), its pairs go back into stock
+        // and it drops out of the khata and every total
+        [HttpPost("{id}/cancel")]
+        public async Task<IActionResult> CancelSale(int id, [FromBody] CancelInput input)
+        {
+            if (Cancellation.Validate(input) is { } invalid) return BadRequest(new { message = invalid });
+            var sale = await _context.Sales.FindAsync(id);
+            if (sale == null) return NotFound();
+            if (await _context.SalesReturns.AnyAsync(r => r.SaleId == id))
+                return BadRequest(new { message = "This bill has returns. Delete its returns first, then cancel the bill." });
+            await MoveStock(PairsByProduct(sale.LineItemsJson), null);
+            Cancellation.Apply(sale, User.Identity?.Name, input);
+            await _context.SaveChangesAsync();
+            return NoContent();
+        }
+
+        // Admin only: removes the bill for good (the audit log keeps a copy)
+        [Authorize(Roles = "Admin")]
         [HttpDelete("{id}")]
         public async Task<IActionResult> DeleteSale(int id)
         {
@@ -145,7 +165,9 @@ namespace ShoeFactoryApi.Controllers
             var billNo = GetString(payload, "billNo")?.Trim();
             if (!string.IsNullOrEmpty(billNo)) sale.BillNo = billNo;
             else if (sale.Id == 0) { error = "billNo is required."; return false; }
-            sale.Date = payload.TryGetProperty("date", out var dt) && DateTime.TryParse(dt.GetString(), out var parsed)
+            // Read as UTC whatever the server's own time zone is ("...Z" from the browser, or a plain date)
+            sale.Date = payload.TryGetProperty("date", out var dt) &&
+                        DateTime.TryParse(dt.GetString(), CultureInfo.InvariantCulture, DateTimeStyles.AdjustToUniversal | DateTimeStyles.AssumeUniversal, out var parsed)
                 ? DateTime.SpecifyKind(parsed, DateTimeKind.Utc)
                 : DateTime.UtcNow;
 

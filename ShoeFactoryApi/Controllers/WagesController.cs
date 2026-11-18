@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using ShoeFactoryApi.Data;
 using ShoeFactoryApi.Models;
+using ShoeFactoryApi.Services;
 
 namespace ShoeFactoryApi.Controllers
 {
@@ -255,6 +256,21 @@ namespace ShoeFactoryApi.Controllers
             return CreatedAtAction(nameof(GetPayments), new { id = payment.Id }, payment);
         }
 
+        // Staff cancel a mistaken advance instead of deleting it; it no longer comes off the week's hisab
+        [HttpPost("payments/{id}/cancel")]
+        public async Task<IActionResult> CancelPayment(int id, [FromBody] CancelInput input)
+        {
+            if (Cancellation.Validate(input) is { } invalid) return BadRequest(new { message = invalid });
+            var payment = await _context.WagePayments.FindAsync(id);
+            if (payment == null) return NotFound();
+            if (payment.Kind == WagePaymentKinds.Settlement) return BadRequest(new { message = SettlementPaymentMessage });
+            Cancellation.Apply(payment, User.Identity?.Name, input);
+            await _context.SaveChangesAsync();
+            return NoContent();
+        }
+
+        private const string SettlementPaymentMessage = "This is a Saturday settlement. Undo the week on the Labour Hisab sheet instead.";
+
         // DELETE: api/wages/payments/{id}
         [Authorize(Roles = "Admin")]
         [HttpDelete("payments/{id}")]
@@ -262,6 +278,7 @@ namespace ShoeFactoryApi.Controllers
         {
             var payment = await _context.WagePayments.FindAsync(id);
             if (payment == null) return NotFound();
+            if (payment.Kind == WagePaymentKinds.Settlement) return BadRequest(new { message = SettlementPaymentMessage });
             _context.WagePayments.Remove(payment);
             await _context.SaveChangesAsync();
             return NoContent();

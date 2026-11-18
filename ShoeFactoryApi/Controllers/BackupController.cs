@@ -6,7 +6,7 @@ using ShoeFactoryApi.Services;
 
 namespace ShoeFactoryApi.Controllers
 {
-    /// <summary>Admin-only backups: download now, email now, and the nightly email's status.</summary>
+    /// <summary>Admin-only backups: download now, email now, restore test now, and their status.</summary>
     [ApiController]
     [Route("api/backup")]
     [Authorize(Roles = "Admin")]
@@ -26,6 +26,14 @@ namespace ShoeFactoryApi.Controllers
             return error == null ? Ok(new { message = "Backup emailed." }) : BadRequest(new { message = $"Backup email failed: {error}" });
         }
 
+        // Runs the weekly restore test now (takes a few seconds)
+        [HttpPost("restore-test")]
+        public async Task<IActionResult> RestoreTestNow()
+        {
+            var result = await RestoreTest.RunAndRecordAsync(_db, User.Identity?.Name ?? "admin");
+            return Ok(result);
+        }
+
         [HttpGet("status")]
         public async Task<IActionResult> Status()
         {
@@ -36,8 +44,14 @@ namespace ShoeFactoryApi.Controllers
                 .Take(5)
                 .Select(a => new { a.At, a.Action, a.User, a.Changes })
                 .ToListAsync();
+            var restoreTest = await _db.AuditLogs.AsNoTracking()
+                .Where(a => a.Entity == "Backup" && a.Action.StartsWith("restore_test"))
+                .OrderByDescending(a => a.Id)
+                .Select(a => new { a.At, a.Action, a.User, a.Changes })
+                .FirstOrDefaultAsync();
             return Ok(new
             {
+                restoreTest,
                 configured = settings.Configured,
                 to = settings.To,
                 hourPakistan = settings.Hour,

@@ -17,6 +17,8 @@ import UsersPage from './admin/UsersPage'
 import ProfitPage from './reports/ProfitPage'
 import WeeklyWagesPanel from './wages/WeeklyWagesPanel'
 import AuditPage from './admin/AuditPage'
+import PeriodsPanel from './admin/PeriodsPanel'
+import CancelDialog from './common/CancelDialog'
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || ''
 
@@ -224,6 +226,8 @@ export default function App() {
   ])
 
   const [editingBill, setEditingBill] = useState(null)
+  // { title, detail, run(reason) } while the cancel-with-reason dialog is open
+  const [cancelRequest, setCancelRequest] = useState(null)
   const [salesReturns, setSalesReturns] = useState([])
   const [returningSale, setReturningSale] = useState(null)
   const [selectedSaleIds, setSelectedSaleIds] = useState([])
@@ -272,6 +276,27 @@ export default function App() {
   }, [token])
 
   const authHeaders = () => ({ Authorization: `Bearer ${token}` })
+
+  // Any save refused because its month is closed shows the server's explanation
+  useEffect(() => {
+    const id = axios.interceptors.response.use(undefined, err => {
+      if (err.response?.data?.periodClosed && !err.config?.showsOwnError) alert(err.response.data.message)
+      return Promise.reject(err)
+    })
+    return () => axios.interceptors.response.eject(id)
+  }, [])
+
+  // Staff cancel posted entries instead of deleting them: kept on record with who and why,
+  // taken out of stock, khata and totals by the server
+  const askCancel = (title, detail, urls) => setCancelRequest({
+    title,
+    detail,
+    run: async reason => {
+      for (const url of urls) await axios.post(`${API_BASE_URL}${url}`, { reason }, { headers: authHeaders(), showsOwnError: true })
+      setSelectedSaleIds([])
+      await fetchAllData()
+    }
+  })
 
   const fetchAllData = async () => {
     setLoading(true)
@@ -351,7 +376,7 @@ export default function App() {
       setAllowedTabs(allowedTabs ?? null)
       setLoginForm({ username: '', password: '' })
     } catch (err) {
-      setLoginError('Invalid username or password')
+      setLoginError(err.response?.status === 429 ? err.response.data?.message : 'Invalid username or password')
     }
   }
 
@@ -2176,6 +2201,7 @@ export default function App() {
             onBack={() => setHistoryCustomerId(null)}
             canDeletePayments={role === 'Admin'}
             onDeletePayment={handleDeletePayment}
+            onCancelPayment={e => askCancel('Cancel this payment?', `Rs. ${numberOrZero(e.credit).toLocaleString()} from ${historyCustomer.name}. The customer's balance goes back up by this amount.`, [`/api/payments/${e.sortId}/cancel`])}
             canEditBills={role === 'Admin'}
             onEditBill={setEditingBill}
             canDeleteReturns={role === 'Admin'}
@@ -2481,12 +2507,26 @@ export default function App() {
               <h2 style={{ margin: 0, fontSize: '18px', fontWeight: '700', color: '#1e293b' }}>Wholesale Multi-Item Billing & Invoicing</h2>
               <button
                 type="button"
-                onClick={handleDeleteSelectedBills}
+                onClick={() => askCancel(
+                  `Cancel ${selectedSaleIds.length} bill${selectedSaleIds.length === 1 ? '' : 's'}?`,
+                  'Their pairs go back into stock and they leave the customer khata. The bills stay on record as cancelled.',
+                  selectedSaleIds.map(id => `/api/sales/${id}/cancel`)
+                )}
                 disabled={selectedSaleIds.length === 0}
-                style={{ backgroundColor: selectedSaleIds.length === 0 ? '#cbd5e1' : '#dc2626', color: '#fff', border: 'none', borderRadius: '6px', padding: '8px 12px', cursor: selectedSaleIds.length === 0 ? 'not-allowed' : 'pointer', fontWeight: '700', fontSize: '12px' }}
+                style={{ backgroundColor: selectedSaleIds.length === 0 ? '#cbd5e1' : '#ea580c', color: '#fff', border: 'none', borderRadius: '6px', padding: '8px 12px', cursor: selectedSaleIds.length === 0 ? 'not-allowed' : 'pointer', fontWeight: '700', fontSize: '12px' }}
               >
-                Delete Selected Bills ({selectedSaleIds.length})
+                Cancel Selected Bills ({selectedSaleIds.length})
               </button>
+              {role === 'Admin' && (
+                <button
+                  type="button"
+                  onClick={handleDeleteSelectedBills}
+                  disabled={selectedSaleIds.length === 0}
+                  style={{ backgroundColor: selectedSaleIds.length === 0 ? '#cbd5e1' : '#dc2626', color: '#fff', border: 'none', borderRadius: '6px', padding: '8px 12px', cursor: selectedSaleIds.length === 0 ? 'not-allowed' : 'pointer', fontWeight: '700', fontSize: '12px' }}
+                >
+                  Delete Selected Bills ({selectedSaleIds.length})
+                </button>
+              )}
               <button
                 type="button"
                 onClick={handleDownloadSelectedBills}
@@ -2908,7 +2948,8 @@ export default function App() {
                               ) : (
                                 <>
                                   <button onClick={() => { setEditingProductionId(p.id); setEditProductionInputs(prev => ({ ...prev, [p.id]: {} })) }} style={{ backgroundColor: '#2563eb', color: '#fff', border: 'none', padding: '6px 10px', borderRadius: '4px', cursor: 'pointer', fontWeight: '600', fontSize: '12px' }}>Edit</button>
-                                  <button onClick={() => handleDeleteProduction(p.id)} style={{ backgroundColor: '#dc2626', color: '#fff', border: 'none', padding: '6px 10px', borderRadius: '4px', cursor: 'pointer', fontWeight: '600', fontSize: '12px' }}>Delete</button>
+                                  <button onClick={() => askCancel('Cancel this production entry?', `${p.articleNumber}, ${p.date}. Its pairs leave finished stock and its recipe material goes back to raw materials.`, [`/api/production/${p.id}/cancel`])} style={{ backgroundColor: '#ea580c', color: '#fff', border: 'none', padding: '6px 10px', borderRadius: '4px', cursor: 'pointer', fontWeight: '600', fontSize: '12px' }}>Cancel</button>
+                                  {role === 'Admin' && <button onClick={() => handleDeleteProduction(p.id)} style={{ backgroundColor: '#dc2626', color: '#fff', border: 'none', padding: '6px 10px', borderRadius: '4px', cursor: 'pointer', fontWeight: '600', fontSize: '12px' }}>Delete</button>}
                                 </>
                               )}
                             </div>
@@ -3067,9 +3108,9 @@ export default function App() {
 
             <div style={{ backgroundColor: '#ffffff', borderRadius: '10px', border: '1px solid #e2e8f0', overflowX: 'auto' }}>
               <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', minWidth: '650px' }}>
-                <thead><tr style={{ backgroundColor: '#f1f5f9', fontSize: '12px', color: '#475569', textTransform: 'uppercase' }}><th style={{ padding: '14px' }}>Date</th><th style={{ padding: '14px' }}>Worker</th><th style={{ padding: '14px' }}>Role</th><th style={{ padding: '14px' }}>Notes</th><th style={{ padding: '14px' }}>Amount Paid</th></tr></thead>
+                <thead><tr style={{ backgroundColor: '#f1f5f9', fontSize: '12px', color: '#475569', textTransform: 'uppercase' }}><th style={{ padding: '14px' }}>Date</th><th style={{ padding: '14px' }}>Worker</th><th style={{ padding: '14px' }}>Role</th><th style={{ padding: '14px' }}>Notes</th><th style={{ padding: '14px' }}>Amount Paid</th><th style={{ padding: '14px' }}></th></tr></thead>
                 <tbody>
-                  {wagePayments.map(payment => <tr key={payment.id} style={{ borderBottom: '1px solid #f1f5f9', fontSize: '14px' }}><td style={{ padding: '14px' }}>{payment.paymentDate ? payment.paymentDate.split('T')[0] : '-'}</td><td style={{ padding: '14px', fontWeight: '700' }}>{payment.worker?.name || workers.find(worker => worker.id === payment.workerId)?.name || 'Unknown'}</td><td style={{ padding: '14px' }}>{payment.worker?.role || workers.find(worker => worker.id === payment.workerId)?.role || '-'}</td><td style={{ padding: '14px' }}><span style={{ fontSize: '11px', fontWeight: '700', padding: '2px 8px', borderRadius: '999px', marginRight: '6px', backgroundColor: payment.kind === 'settlement' ? '#dcfce7' : '#fef3c7', color: payment.kind === 'settlement' ? '#166534' : '#92400e' }}>{payment.kind === 'settlement' ? 'Saturday pay' : 'Advance'}</span>{payment.notes || ''}</td><td style={{ padding: '14px', color: '#dc2626', fontWeight: '700' }}>Rs. {Number(payment.amount || 0).toLocaleString()}</td></tr>)}
+                  {wagePayments.map(payment => <tr key={payment.id} style={{ borderBottom: '1px solid #f1f5f9', fontSize: '14px' }}><td style={{ padding: '14px' }}>{payment.paymentDate ? payment.paymentDate.split('T')[0] : '-'}</td><td style={{ padding: '14px', fontWeight: '700' }}>{payment.worker?.name || workers.find(worker => worker.id === payment.workerId)?.name || 'Unknown'}</td><td style={{ padding: '14px' }}>{payment.worker?.role || workers.find(worker => worker.id === payment.workerId)?.role || '-'}</td><td style={{ padding: '14px' }}><span style={{ fontSize: '11px', fontWeight: '700', padding: '2px 8px', borderRadius: '999px', marginRight: '6px', backgroundColor: payment.kind === 'settlement' ? '#dcfce7' : '#fef3c7', color: payment.kind === 'settlement' ? '#166534' : '#92400e' }}>{payment.kind === 'settlement' ? 'Saturday pay' : 'Advance'}</span>{payment.notes || ''}</td><td style={{ padding: '14px', color: '#dc2626', fontWeight: '700' }}>Rs. {Number(payment.amount || 0).toLocaleString()}</td><td style={{ padding: '14px' }}>{payment.kind !== 'settlement' && <button type="button" onClick={() => askCancel('Cancel this advance?', `Rs. ${Number(payment.amount || 0).toLocaleString()} to ${payment.worker?.name || 'worker'}. It will no longer come off the Saturday hisab.`, [`/api/wages/payments/${payment.id}/cancel`])} style={{ backgroundColor: '#ea580c', color: '#fff', border: 'none', padding: '6px 10px', borderRadius: '4px', cursor: 'pointer', fontWeight: '600', fontSize: '12px' }}>Cancel</button>}</td></tr>)}
                   {wagePayments.length === 0 && <tr><td colSpan="5" style={{ padding: '20px', textAlign: 'center', color: '#64748b' }}>No wage payments recorded.</td></tr>}
                 </tbody>
               </table>
@@ -3095,6 +3136,7 @@ export default function App() {
                     <th style={{ padding: '14px' }}>Category</th>
                     <th style={{ padding: '14px' }}>Notes</th>
                     <th style={{ padding: '14px' }}>Amount</th>
+                    <th style={{ padding: '14px' }}></th>
                   </tr>
                 </thead>
                 <tbody>
@@ -3104,6 +3146,9 @@ export default function App() {
                       <td style={{ padding: '14px', fontWeight: '700', color: '#0f172a' }}>{ex.category}</td>
                       <td style={{ padding: '14px', color: '#475569' }}>{ex.notes || '-'}</td>
                       <td style={{ padding: '14px', color: '#dc2626', fontWeight: '700' }}>Rs. {ex.amount.toLocaleString()}</td>
+                      <td style={{ padding: '14px' }}>
+                        <button type="button" onClick={() => askCancel('Cancel this expense?', `${ex.category}, Rs. ${ex.amount.toLocaleString()}.`, [`/api/expenses/${ex.id}/cancel`])} style={{ backgroundColor: '#ea580c', color: '#fff', border: 'none', padding: '6px 10px', borderRadius: '4px', cursor: 'pointer', fontWeight: '600', fontSize: '12px' }}>Cancel</button>
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -3162,7 +3207,12 @@ export default function App() {
 
         {currentTab === 'profit' && <ProfitPage token={token} />}
 
-        {currentTab === 'users' && <UsersPage token={token} currentUser={username} tabs={tabs} />}
+        {currentTab === 'users' && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+            <UsersPage token={token} currentUser={username} tabs={tabs} />
+            <PeriodsPanel token={token} />
+          </div>
+        )}
 
         {returningSale && (
           <ReturnModal
@@ -3175,6 +3225,15 @@ export default function App() {
         )}
 
         {currentTab === 'audit' && <AuditPage token={token} />}
+
+        {cancelRequest && (
+          <CancelDialog
+            title={cancelRequest.title}
+            detail={cancelRequest.detail}
+            onConfirm={cancelRequest.run}
+            onClose={() => setCancelRequest(null)}
+          />
+        )}
 
         {editingBill && role === 'Admin' && (
           <EditBillModal

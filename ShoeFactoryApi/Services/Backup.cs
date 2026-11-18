@@ -9,7 +9,11 @@ using ShoeFactoryApi.Models;
 
 namespace ShoeFactoryApi.Services
 {
-    /// <summary>Full copy of the business data as JSON, used by the download button and the nightly email.</summary>
+    /// <summary>
+    /// Full copy of the business data as JSON, used by the download button, the nightly email and the weekly
+    /// restore test. Property names are the database column names, so a backup can be loaded back table by table.
+    /// Cancelled records are included (IgnoreQueryFilters) so nothing is lost.
+    /// </summary>
     public static class BackupBuilder
     {
         public static async Task<byte[]> BuildJsonAsync(FactoryDbContext db)
@@ -21,15 +25,15 @@ namespace ShoeFactoryApi.Services
                 Articles = await db.Articles.AsNoTracking().ToListAsync(),
                 ProductPriceHistories = await db.ProductPriceHistories.AsNoTracking().ToListAsync(),
                 Customers = await db.Customers.AsNoTracking().ToListAsync(),
-                Sales = await db.Sales.AsNoTracking().ToListAsync(),
-                Expenses = await db.Expenses.AsNoTracking().ToListAsync(),
-                Payments = await db.Payments.AsNoTracking().ToListAsync(),
+                Sales = await db.Sales.IgnoreQueryFilters().AsNoTracking().ToListAsync(),
+                Expenses = await db.Expenses.IgnoreQueryFilters().AsNoTracking().ToListAsync(),
+                Payments = await db.Payments.IgnoreQueryFilters().AsNoTracking().ToListAsync(),
                 Workers = await db.Workers.AsNoTracking().ToListAsync(),
-                WagePayments = await db.WagePayments.AsNoTracking().ToListAsync(),
+                WagePayments = await db.WagePayments.IgnoreQueryFilters().AsNoTracking().ToListAsync(),
                 RawMaterials = await db.RawMaterials.AsNoTracking().ToListAsync(),
                 // SizesJson is hidden from normal API output, so the backup lists it explicitly
-                ProductionRecords = (await db.ProductionRecords.AsNoTracking().ToListAsync())
-                    .Select(p => new { p.Id, p.Date, p.ArticleNumber, p.Dozens, p.Pairs, p.Notes, p.CreatedAt, p.SizesJson }),
+                ProductionRecords = (await db.ProductionRecords.IgnoreQueryFilters().AsNoTracking().ToListAsync())
+                    .Select(p => new { p.Id, p.Date, p.ArticleNumber, p.Dozens, p.Pairs, p.Notes, p.CreatedAt, p.SizesJson, p.CancelledAt, p.CancelledBy, p.CancelReason }),
                 BomEntries = await db.BomEntries.AsNoTracking().ToListAsync(),
                 MaterialEntries = await db.MaterialEntries.AsNoTracking().ToListAsync(),
                 MaterialCounts = await db.MaterialCounts.AsNoTracking().ToListAsync(),
@@ -38,6 +42,7 @@ namespace ShoeFactoryApi.Services
                 SalesReturns = await db.SalesReturns.AsNoTracking().ToListAsync(),
                 WageRates = await db.WageRates.AsNoTracking().ToListAsync(),
                 WeeklySettlements = await db.WeeklySettlements.AsNoTracking().ToListAsync(),
+                ClosedPeriods = await db.ClosedPeriods.AsNoTracking().ToListAsync(),
                 // Logins only, never password hashes
                 Users = await db.Users.AsNoTracking().Select(u => new { u.Id, u.Username, u.Role, u.AllowedTabs }).ToListAsync(),
                 AuditLogs = await db.AuditLogs.AsNoTracking().OrderBy(a => a.Id).ToListAsync()
@@ -111,6 +116,28 @@ namespace ShoeFactoryApi.Services
             var next = new DateTimeOffset(nowPk.Year, nowPk.Month, nowPk.Day, hour, 0, 0, PakistanOffset);
             if (next <= nowPk) next = next.AddDays(1);
             return next - nowPk;
+        }
+
+        /// <summary>Sends a plain message to the backup address (used for restore-test failures); returns an error or null.</summary>
+        public static async Task<string?> SendNoticeAsync(Settings settings, string subject, string body, CancellationToken cancellationToken = default)
+        {
+            if (!settings.Configured) return "Backup email is not set up.";
+            try
+            {
+                using var message = new MailMessage(settings.User!, settings.To!) { Subject = subject, Body = body };
+                using var smtp = new SmtpClient(settings.Host, settings.Port)
+                {
+                    EnableSsl = settings.Ssl,
+                    Credentials = new NetworkCredential(settings.User, settings.Password),
+                    Timeout = 60_000
+                };
+                await smtp.SendMailAsync(message, cancellationToken);
+                return null;
+            }
+            catch (Exception ex)
+            {
+                return ex.InnerException?.Message ?? ex.Message;
+            }
         }
 
         /// <summary>Builds, zips and emails a backup; returns an error message or null on success.</summary>

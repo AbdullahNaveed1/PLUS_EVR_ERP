@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import axios from 'axios'
 import '../entry/entry.css'
 
-// Admin backups: download a full copy now, email one now, and see the nightly email's status.
+// Admin backups: download a full copy now, email one now, test that a backup loads back, and see their status.
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || ''
 const errorText = err => err?.response?.data?.message || (err?.response ? `Server error (HTTP ${err.response.status})` : 'Could not reach the server.')
@@ -55,7 +55,23 @@ export default function BackupPanel({ token }) {
     }
   }
 
-  const last = status?.recent?.[0]
+  const restoreTest = async () => {
+    setBusy('restore')
+    setMessage(null)
+    try {
+      const res = await axios.post(`${API_BASE_URL}/api/backup/restore-test`, null, headers)
+      setMessage({ tone: res.data.passed ? 'success' : 'error', text: [res.data.summary, ...(res.data.problems || []).slice(0, 5)].join(' ') })
+    } catch (err) {
+      setMessage({ tone: 'error', text: errorText(err) })
+    } finally {
+      setBusy('')
+      load()
+    }
+  }
+
+  const last = status?.recent?.find(a => a.action.startsWith('backup_'))
+  const test = status?.restoreTest
+  const testSummary = test ? (() => { try { return JSON.parse(test.changes).Summary } catch { return '' } })() : ''
   const lastError = last?.action === 'backup_failed' ? (() => { try { return JSON.parse(last.changes).error } catch { return '' } })() : ''
 
   return (
@@ -66,6 +82,9 @@ export default function BackupPanel({ token }) {
           <div className="em-head-actions">
             <button type="button" className="em-btn em-btn-ghost em-btn-sm" onClick={download} aria-busy={busy === 'download'} disabled={!!busy}>
               {busy === 'download' ? 'Preparing…' : '⬇ Download backup now'}
+            </button>
+            <button type="button" className="em-btn em-btn-ghost em-btn-sm" onClick={restoreTest} aria-busy={busy === 'restore'} disabled={!!busy}>
+              {busy === 'restore' ? 'Testing…' : '🧪 Test restore now'}
             </button>
             <button type="button" className="em-btn em-btn-primary em-btn-sm" onClick={emailNow} aria-busy={busy === 'email'} disabled={!!busy || !status?.configured}>
               {busy === 'email' ? 'Sending…' : '✉️ Email backup now'}
@@ -84,6 +103,12 @@ export default function BackupPanel({ token }) {
             (a Gmail app password) to the app's variables on Railway. You can still download a backup any time.
           </p>
         ))}
+        {status && (
+          <p className="em-hint" style={{ margin: '8px 0 0' }}>
+            Every Sunday at 3:00 AM a fresh backup is loaded back into a temporary copy and checked row by row; you get an email if it fails.{' '}
+            {test ? <>Last test: <strong>{test.action === 'restore_test_passed' ? '✅ passed' : '❌ failed'}</strong> {when(test.at)}{testSummary ? ` (${testSummary})` : ''}.</> : 'Not run yet.'}
+          </p>
+        )}
       </div>
     </div>
   )

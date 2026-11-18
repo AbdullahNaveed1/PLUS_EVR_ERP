@@ -130,6 +130,24 @@ namespace ShoeFactoryApi.Controllers
             return Ok(existing);
         }
 
+        // Staff cancel instead of deleting: the pairs leave finished stock and the recipe material goes back,
+        // but the record stays (who, when, why)
+        [HttpPost("{id:int}/cancel")]
+        public async Task<IActionResult> Cancel(int id, [FromBody] CancelInput input)
+        {
+            if (Cancellation.Validate(input) is { } invalid) return BadRequest(new { message = invalid });
+            var existing = await _db.ProductionRecords.FindAsync(id);
+            if (existing == null) return NotFound();
+
+            await MoveStock(ReadSizes(existing.SizesJson), new List<ProductionSize>());
+            await RecipeDeductions.Sync(_db, existing, User.Identity?.Name, removeOnly: true);
+            Cancellation.Apply(existing, User.Identity?.Name, input);
+            await _db.SaveChangesAsync();
+            return NoContent();
+        }
+
+        // Admin only: removes the record for good (the audit log keeps a copy)
+        [Authorize(Roles = "Admin")]
         [HttpDelete("{id:int}")]
         public async Task<IActionResult> Delete(int id)
         {

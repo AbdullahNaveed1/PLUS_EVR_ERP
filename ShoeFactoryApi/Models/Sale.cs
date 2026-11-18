@@ -2,7 +2,7 @@ using System.ComponentModel.DataAnnotations.Schema;
 
 namespace ShoeFactoryApi.Models
 {
-    public class Sale
+    public class Sale : ICancellable
     {
         public int Id { get; set; }
         public string CustomerId { get; set; } = string.Empty;
@@ -19,5 +19,10 @@ namespace ShoeFactoryApi.Models
 
         [Column(TypeName = "jsonb")]
         public string LineItemsJson { get; set; } = "[]";
+
+        // Set when cancelled instead of deleted (see ICancellable)
+        public DateTime? CancelledAt { get; set; }
+        public string? CancelledBy { get; set; }
+        public string? CancelReason { get; set; }
     }
 }

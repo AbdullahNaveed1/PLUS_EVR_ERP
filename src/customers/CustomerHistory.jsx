@@ -32,7 +32,7 @@ const entryName = e => e.kind === 'bill'
   ? `Bill No ${e.billNo || '—'}`
   : e.kind === 'return' ? `Return (Bill No ${e.billNo || '—'})` : 'Cash received'
 
-export default function CustomerHistory({ customer, ledger, sales, onBack, canDeletePayments, onDeletePayment, canEditBills, onEditBill, canDeleteReturns, onDeleteReturn }) {
+export default function CustomerHistory({ customer, ledger, sales, onBack, canDeletePayments, onDeletePayment, onCancelPayment, canEditBills, onEditBill, canDeleteReturns, onDeleteReturn }) {
   const [openKey, setOpenKey] = useState(null)
   const [confirmPayment, setConfirmPayment] = useState(null)
   const [deleting, setDeleting] = useState(false)
@@ -128,6 +128,9 @@ export default function CustomerHistory({ customer, ledger, sales, onBack, canDe
         <div className="em-row-actions">
           {e.kind === 'bill' && canEditBills && sale && (
             <button type="button" className="em-btn em-btn-ghost em-btn-sm" onClick={() => onEditBill(sale)}>✏️ Edit bill</button>
+          )}
+          {e.kind === 'payment' && onCancelPayment && (
+            <button type="button" className="em-btn em-btn-ghost em-btn-sm" onClick={() => onCancelPayment(e)}>Cancel payment</button>
           )}
           {e.kind === 'payment' && canDeletePayments && (
             <button type="button" className="em-btn em-btn-danger em-btn-sm" onClick={() => setConfirmPayment(e)}>Delete payment</button>
