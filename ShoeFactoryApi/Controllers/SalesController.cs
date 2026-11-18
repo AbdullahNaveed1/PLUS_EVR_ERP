@@ -41,7 +41,8 @@ namespace ShoeFactoryApi.Controllers
         {
             var sale = new Sale();
             // FIX #6 — recompute totals from line items; reject mismatches
-            if (!ApplyPayloadAndRecalculate(sale, payload, out var error))
+            // Only Admins may send a line from Farkhabad; everyone else bills from Saggian
+            if (!ApplyPayloadAndRecalculate(sale, payload, User.IsInRole("Admin"), out var error))
                 return BadRequest(new { message = error });
 
             if (!skipStock) await MoveStock(null, PairsByProduct(sale.LineItemsJson));
@@ -63,7 +64,7 @@ namespace ShoeFactoryApi.Controllers
                 return BadRequest(new { message = "This bill has returns. Delete its returns first, then change the bill." });
 
             var pairsBefore = PairsByProduct(sale.LineItemsJson);
-            if (!ApplyPayloadAndRecalculate(sale, payload, out var error))
+            if (!ApplyPayloadAndRecalculate(sale, payload, canUseFarkhabad: true, out var error))
                 return BadRequest(new { message = error });
 
             // Bills saved before line items existed have nothing to compare against: leave stock alone
@@ -88,7 +89,8 @@ namespace ShoeFactoryApi.Controllers
             }
         }
 
-        // Pairs per product id in a bill's saved line items; null when they cannot be read
+        // Pairs per product id in a bill's saved line items (Saggian lines only: Farkhabad goods are not in our stock);
+        // null when they cannot be read
         private static Dictionary<int, decimal>? PairsByProduct(string? lineItemsJson)
         {
             if (string.IsNullOrWhiteSpace(lineItemsJson)) return null;
@@ -101,6 +103,7 @@ namespace ShoeFactoryApi.Controllers
             foreach (var item in items.EnumerateArray())
             {
                 if (!int.TryParse(ProductIdOf(item), out var productId)) continue;
+                if (Facilities.IsFarkhabad(GetString(item, "facility"))) continue;
                 var pairs = GetDecimal(item, "pairs");
                 if (pairs <= 0)
                     pairs = GetDecimal(item, "qty") * (GetString(item, "unitType") == "pairs" ? 1m : 12m);
@@ -146,7 +149,7 @@ namespace ShoeFactoryApi.Controllers
         /// FIX #4/#5/#6 — authoritative server-side recalculation.
         /// Trusts only: unit price, pairs, discount-per-pair. Everything else is recomputed.
         /// </summary>
-        private static bool ApplyPayloadAndRecalculate(Sale sale, JsonElement payload, out string error)
+        private static bool ApplyPayloadAndRecalculate(Sale sale, JsonElement payload, bool canUseFarkhabad, out string error)
         {
             error = string.Empty;
 
@@ -213,7 +216,8 @@ namespace ShoeFactoryApi.Controllers
                     ["grossAmount"] = gross,
                     ["discountAmount"] = discountAmount,
                     ["netAmount"] = net,
-                    ["description"] = GetString(item, "description") ?? string.Empty
+                    ["description"] = GetString(item, "description") ?? string.Empty,
+                    ["facility"] = canUseFarkhabad && Facilities.IsFarkhabad(GetString(item, "facility")) ? Facilities.Farkhabad : Facilities.Saggian
                 });
             }
 

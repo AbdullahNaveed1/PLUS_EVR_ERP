@@ -17,7 +17,8 @@ const itemsOf = sale => (sale?.lineItems || []).map(item => ({
   pairs: Number(item.pairs) || 0,
   price: Number(item.price) || 0,
   discount: Number(item.discountAmount) || 0,
-  amount: Number(item.netAmount ?? item.grossAmount) || 0
+  amount: Number(item.netAmount ?? item.grossAmount) || 0,
+  farkhabad: item.facility === 'Farkhabad'
 }))
 
 // Time a payment was saved, e.g. "3:42 PM", so same-day duplicates can be told apart
@@ -119,7 +120,7 @@ export default function CustomerHistory({ customer, ledger, sales, onBack, canDe
               <thead><tr><th>Article</th><th>Size</th><th className="em-num">Pairs</th><th className="em-num">Amount</th></tr></thead>
               <tbody>
                 {items.map((i, index) => (
-                  <tr key={index}><td>{i.model}</td><td>{i.size}</td><td className="em-num">{formatNumber(i.pairs)}</td><td className="em-num">{formatNumber(i.amount)}</td></tr>
+                  <tr key={index}><td>{i.model}{i.farkhabad && <span className="em-hint"> · Farkhabad</span>}</td><td>{i.size}</td><td className="em-num">{formatNumber(i.pairs)}</td><td className="em-num">{formatNumber(i.amount)}</td></tr>
                 ))}
               </tbody>
             </table>

@@ -2,6 +2,18 @@ using System.ComponentModel.DataAnnotations.Schema;
 
 namespace ShoeFactoryApi.Models
 {
+    /// <summary>
+    /// Where a bill line's goods are sent from. Saggian is the factory, and its stock is the only stock the app
+    /// keeps; Farkhabad is a storage facility, so its lines are billed but never taken out of stock.
+    /// </summary>
+    public static class Facilities
+    {
+        public const string Saggian = "Saggian";
+        public const string Farkhabad = "Farkhabad";
+
+        public static bool IsFarkhabad(string? facility) => string.Equals(facility?.Trim(), Farkhabad, StringComparison.OrdinalIgnoreCase);
+    }
+
     public class Sale : ICancellable
     {
         public int Id { get; set; }

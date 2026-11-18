@@ -222,7 +222,7 @@ export default function App() {
   const [billNo, setBillNo] = useState('')
 
   const [cartItems, setCartItems] = useState([
-    { productId: '', model: '', size: '', qty: '', unitType: 'dozens', price: '' }
+    { productId: '', model: '', size: '', qty: '', unitType: 'dozens', price: '', facility: 'Saggian' }
   ])
 
   const [editingBill, setEditingBill] = useState(null)
@@ -679,7 +679,7 @@ export default function App() {
   }
 
   const addCartRow = () => {
-    setCartItems([...cartItems, { productId: '', model: '', size: '', qty: '', unitType: 'dozens', price: '' }])
+    setCartItems([...cartItems, { productId: '', model: '', size: '', qty: '', unitType: 'dozens', price: '', facility: 'Saggian' }])
   }
 
   const removeCartRow = (index) => {
@@ -714,6 +714,8 @@ export default function App() {
         size: sizeVal,
         qty: row.qty,
         unitType: row.unitType,
+        // Farkhabad (storage) lines are billed but not taken out of Saggian stock; Admin only
+        facility: role === 'Admin' && row.facility === 'Farkhabad' ? 'Farkhabad' : 'Saggian',
         pairs: itemPairs,
         price: unitPrice,
         grossAmount: lineGross,
@@ -767,7 +769,7 @@ export default function App() {
     setTransportCompany('')
     setBuiltyNo('')
     setBillNo('')
-    setCartItems([{ productId: '', model: '', size: '', qty: '', unitType: 'dozens', price: '' }])
+    setCartItems([{ productId: '', model: '', size: '', qty: '', unitType: 'dozens', price: '', facility: 'Saggian' }])
   }
 
   // Admin only (the API also enforces this). The server recalculates totals and moves stock by the difference.
@@ -2692,6 +2694,18 @@ export default function App() {
                       <option value="dozens">Dozens (12x)</option>
                       <option value="pairs">Pairs (1x)</option>
                     </select>
+                    {role === 'Admin' && (
+                      <select
+                        value={item.facility || 'Saggian'}
+                        onChange={e => handleCartItemChange(index, 'facility', e.target.value)}
+                        aria-label="Sent from"
+                        title="Farkhabad lines are not taken out of Saggian stock"
+                        style={{ padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '12px', backgroundColor: item.facility === 'Farkhabad' ? '#fef3c7' : '#fff', color: '#0f172a' }}
+                      >
+                        <option value="Saggian">From Saggian</option>
+                        <option value="Farkhabad">From Farkhabad</option>
+                      </select>
+                    )}
 
                     <input
                       type="text"

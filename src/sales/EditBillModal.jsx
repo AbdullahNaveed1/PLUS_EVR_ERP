@@ -9,6 +9,7 @@ import '../entry/entry.css'
 const rs = value => `Rs. ${formatNumber(Number(value) || 0)}`
 const toNumber = value => (Number.isFinite(Number(value)) ? Number(value) : 0)
 const pairsOf = line => toNumber(line.qty) * (line.unitType === 'pairs' ? 1 : 12)
+const isFarkhabad = line => line.facility === 'Farkhabad'
 const lineAmounts = line => {
   const pairs = pairsOf(line)
   const gross = pairs * toNumber(line.price)
@@ -25,6 +26,7 @@ const toLine = item => {
     qty: String(hasQty ? item.qty : toNumber(item.pairs) || ''),
     unitType: hasQty && item.unitType !== 'pairs' ? 'dozens' : 'pairs',
     price: String(toNumber(item.price)),
+    facility: isFarkhabad(item) ? 'Farkhabad' : 'Saggian',
     discountPerPair: String(Math.round(toNumber(item.discountPerPair) * 100) / 100)
   }
 }
@@ -69,8 +71,9 @@ export default function EditBillModal({ sale, inventory, onSave, onClose }) {
       row.pairs += pairs
       map.set(key, row)
     }
-    for (const item of sale.lineItems || []) add(item.productId, `${item.model} (Size ${item.size})`, -toNumber(item.pairs))
-    for (const line of lines) add(line.productId, `${line.model} (Size ${line.size})`, pairsOf(line))
+    // Farkhabad lines never touch Saggian stock
+    for (const item of sale.lineItems || []) if (!isFarkhabad(item)) add(item.productId, `${item.model} (Size ${item.size})`, -toNumber(item.pairs))
+    for (const line of lines) if (!isFarkhabad(line)) add(line.productId, `${line.model} (Size ${line.size})`, pairsOf(line))
     return [...map.values()].filter(r => Math.round(r.pairs) !== 0)
   })()
 
@@ -115,7 +118,7 @@ export default function EditBillModal({ sale, inventory, onSave, onClose }) {
       <div className="em-modal-backdrop" role="presentation" onClick={close}>
         <div className="em-modal em-modal-wide" role="dialog" aria-modal="true" aria-labelledby="eb-title" onClick={e => e.stopPropagation()}>
           <h4 id="eb-title">✏️ Edit bill — {sale.customer}</h4>
-          <p className="em-muted">Bill date {sale.date}. Changing quantities or sizes also updates finished-goods stock.</p>
+          <p className="em-muted">Bill date {sale.date}. Changing quantities, sizes or where a line is sent from also updates Saggian stock.</p>
 
           <div className="em-grid">
             <label className="em-field">
@@ -160,6 +163,13 @@ export default function EditBillModal({ sale, inventory, onSave, onClose }) {
                       <select value={line.unitType} onChange={e => updateLine(index, 'unitType', e.target.value)}>
                         <option value="dozens">Dozens (12)</option>
                         <option value="pairs">Pairs</option>
+                      </select>
+                    </label>
+                    <label className="em-field">
+                      <span className="em-label">Sent from</span>
+                      <select value={line.facility} onChange={e => updateLine(index, 'facility', e.target.value)}>
+                        <option value="Saggian">Saggian (our stock)</option>
+                        <option value="Farkhabad">Farkhabad (not in our stock)</option>
                       </select>
                     </label>
                     <label className="em-field">
