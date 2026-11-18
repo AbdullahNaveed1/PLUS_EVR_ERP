@@ -71,7 +71,9 @@ export default function BackupPanel({ token }) {
 
   const last = status?.recent?.find(a => a.action.startsWith('backup_'))
   const test = status?.restoreTest
-  const testSummary = test ? (() => { try { return JSON.parse(test.changes).Summary } catch { return '' } })() : ''
+  const testResult = test ? (() => { try { return JSON.parse(test.changes) } catch { return {} } })() : {}
+  const testSummary = testResult.Summary || ''
+  const testProblems = test?.action === 'restore_test_failed' ? testResult.problems || [] : []
   const lastError = last?.action === 'backup_failed' ? (() => { try { return JSON.parse(last.changes).error } catch { return '' } })() : ''
 
   return (
@@ -108,6 +110,11 @@ export default function BackupPanel({ token }) {
             Every Sunday at 3:00 AM a fresh backup is loaded back into a temporary copy and checked row by row; you get an email if it fails.{' '}
             {test ? <>Last test: <strong>{test.action === 'restore_test_passed' ? '✅ passed' : '❌ failed'}</strong> {when(test.at)}{testSummary ? ` (${testSummary})` : ''}.</> : 'Not run yet.'}
           </p>
+        )}
+        {testProblems.length > 0 && (
+          <ul className="em-hint" style={{ margin: '6px 0 0', paddingLeft: '18px', color: '#b91c1c' }}>
+            {testProblems.map(problem => <li key={problem}>{problem}</li>)}
+          </ul>
         )}
       </div>
     </div>

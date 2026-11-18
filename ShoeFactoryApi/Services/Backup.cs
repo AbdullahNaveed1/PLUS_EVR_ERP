@@ -1,53 +1,74 @@
+using System.Data;
 using System.IO.Compression;
 using System.Net;
 using System.Net.Mail;
 using System.Text;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage;
+using Npgsql;
 using ShoeFactoryApi.Data;
 using ShoeFactoryApi.Models;
 
 namespace ShoeFactoryApi.Services
 {
     /// <summary>
-    /// Full copy of the business data as JSON, used by the download button, the nightly email and the weekly
-    /// restore test. Property names are the database column names, so a backup can be loaded back table by table.
-    /// Cancelled records are included (IgnoreQueryFilters) so nothing is lost.
+    /// Full copy of the database as JSON, used by the download button, the nightly email and the weekly restore
+    /// test. Every table in the database is copied with every column, straight from PostgreSQL, so tables or
+    /// columns the app's code no longer knows about are included too. Keys are the real column names, so each
+    /// table loads back with jsonb_populate_recordset. Password hashes are never included.
     /// </summary>
     public static class BackupBuilder
     {
-        public static async Task<byte[]> BuildJsonAsync(FactoryDbContext db)
+        public const int FormatVersion = 2;
+
+        public static async Task<byte[]> BuildJsonAsync(FactoryDbContext db, CancellationToken ct = default)
         {
-            var snapshot = new
+            var conn = (NpgsqlConnection)db.Database.GetDbConnection();
+            var openedHere = conn.State != ConnectionState.Open;
+            if (openedHere) await conn.OpenAsync(ct);
+            try
             {
-                ExportedAt = DateTime.UtcNow,
-                Products = await db.Products.AsNoTracking().ToListAsync(),
-                Articles = await db.Articles.AsNoTracking().ToListAsync(),
-                ProductPriceHistories = await db.ProductPriceHistories.AsNoTracking().ToListAsync(),
-                Customers = await db.Customers.AsNoTracking().ToListAsync(),
-                Sales = await db.Sales.IgnoreQueryFilters().AsNoTracking().ToListAsync(),
-                Expenses = await db.Expenses.IgnoreQueryFilters().AsNoTracking().ToListAsync(),
-                Payments = await db.Payments.IgnoreQueryFilters().AsNoTracking().ToListAsync(),
-                Workers = await db.Workers.AsNoTracking().ToListAsync(),
-                WagePayments = await db.WagePayments.IgnoreQueryFilters().AsNoTracking().ToListAsync(),
-                RawMaterials = await db.RawMaterials.AsNoTracking().ToListAsync(),
-                // SizesJson is hidden from normal API output, so the backup lists it explicitly
-                ProductionRecords = (await db.ProductionRecords.IgnoreQueryFilters().AsNoTracking().ToListAsync())
-                    .Select(p => new { p.Id, p.Date, p.ArticleNumber, p.Dozens, p.Pairs, p.Notes, p.CreatedAt, p.SizesJson, p.CancelledAt, p.CancelledBy, p.CancelReason }),
-                BomEntries = await db.BomEntries.AsNoTracking().ToListAsync(),
-                MaterialEntries = await db.MaterialEntries.AsNoTracking().ToListAsync(),
-                MaterialCounts = await db.MaterialCounts.AsNoTracking().ToListAsync(),
-                Suppliers = await db.Suppliers.AsNoTracking().ToListAsync(),
-                SupplierPayments = await db.SupplierPayments.AsNoTracking().ToListAsync(),
-                SalesReturns = await db.SalesReturns.AsNoTracking().ToListAsync(),
-                WageRates = await db.WageRates.AsNoTracking().ToListAsync(),
-                WeeklySettlements = await db.WeeklySettlements.AsNoTracking().ToListAsync(),
-                ClosedPeriods = await db.ClosedPeriods.AsNoTracking().ToListAsync(),
-                // Logins only, never password hashes
-                Users = await db.Users.AsNoTracking().Select(u => new { u.Id, u.Username, u.Role, u.AllowedTabs }).ToListAsync(),
-                AuditLogs = await db.AuditLogs.AsNoTracking().OrderBy(a => a.Id).ToListAsync()
-            };
-            return Encoding.UTF8.GetBytes(JsonSerializer.Serialize(snapshot, new JsonSerializerOptions { WriteIndented = true }));
+                // One consistent snapshot of all tables, unless the caller already started a transaction
+                var outer = db.Database.CurrentTransaction;
+                await using var own = outer == null ? await conn.BeginTransactionAsync(IsolationLevel.RepeatableRead, ct) : null;
+                var tx = own ?? (NpgsqlTransaction)outer!.GetDbTransaction();
+
+                var tables = new List<string>();
+                await using (var list = new NpgsqlCommand(
+                    "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' AND table_type = 'BASE TABLE' " +
+                    "AND table_name <> '__EFMigrationsHistory' ORDER BY table_name", conn, tx))
+                await using (var reader = await list.ExecuteReaderAsync(ct))
+                    while (await reader.ReadAsync(ct)) tables.Add(reader.GetString(0));
+
+                using var stream = new MemoryStream();
+                await using (var writer = new Utf8JsonWriter(stream))
+                {
+                    writer.WriteStartObject();
+                    writer.WriteString("ExportedAt", DateTime.UtcNow);
+                    writer.WriteNumber("FormatVersion", FormatVersion);
+                    foreach (var table in tables)
+                    {
+                        var name = table.Replace("\"", "\"\"");
+                        // Logins are kept, their password hashes never are
+                        var rows = table == "Users" ? "to_jsonb(t) - 'PasswordHash'" : "to_jsonb(t)";
+                        await using var cmd = new NpgsqlCommand($"SELECT COALESCE(jsonb_agg({rows}), '[]'::jsonb)::text FROM public.\"{name}\" t", conn, tx)
+                        {
+                            CommandTimeout = 300
+                        };
+                        writer.WritePropertyName(table);
+                        writer.WriteRawValue((string)(await cmd.ExecuteScalarAsync(ct))!, skipInputValidation: true);
+                    }
+                    writer.WriteEndObject();
+                }
+
+                if (own != null) await own.CommitAsync(ct);
+                return stream.ToArray();
+            }
+            finally
+            {
+                if (openedHere) await conn.CloseAsync();
+            }
         }
     }
 

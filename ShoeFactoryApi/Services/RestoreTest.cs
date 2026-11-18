@@ -1,7 +1,6 @@
 using System.Data;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.EntityFrameworkCore.Storage;
 using Npgsql;
 using NpgsqlTypes;
@@ -46,7 +45,7 @@ namespace ShoeFactoryApi.Services
                 await using (var tx = await db.Database.BeginTransactionAsync(IsolationLevel.RepeatableRead, ct))
                 {
                     var dbTx = (NpgsqlTransaction)tx.GetDbTransaction();
-                    json = await BackupBuilder.BuildJsonAsync(db);
+                    json = await BackupBuilder.BuildJsonAsync(db, ct);
                     using var names = JsonDocument.Parse(json);
                     foreach (var table in Tables(names.RootElement).Select(t => t.Name))
                     {
@@ -68,7 +67,6 @@ namespace ShoeFactoryApi.Services
 
                 // 2. Load every table of the backup into the temporary schema
                 using var doc = JsonDocument.Parse(json);
-                var jsonNames = JsonNamesByTable(db);
                 await Exec(conn, $"DROP SCHEMA IF EXISTS {Schema} CASCADE; CREATE SCHEMA {Schema};", ct);
                 long rows = 0;
                 var tables = 0;
@@ -84,7 +82,7 @@ namespace ShoeFactoryApi.Services
 
                         try
                         {
-                            var restored = await Restore(conn, table, items, jsonNames.GetValueOrDefault(table), problems, ct);
+                            var restored = await Restore(conn, table, items, problems, ct);
                             rows += restored;
                             if (restored != inBackup) problems.Add($"{table}: {inBackup} rows in the backup but {restored} loaded back.");
                         }
@@ -152,54 +150,31 @@ namespace ShoeFactoryApi.Services
         private static IEnumerable<(string Name, JsonElement Items)> Tables(JsonElement root) =>
             root.EnumerateObject().Where(p => p.Value.ValueKind == JsonValueKind.Array).Select(p => (p.Name, p.Value));
 
-        // Backup rows use the C# property names; a few columns are named differently (Products.price_punjab = PricePunjab)
-        private static Dictionary<string, Dictionary<string, string>> JsonNamesByTable(FactoryDbContext db) =>
-            db.Model.GetEntityTypes()
-                .Where(e => e.GetTableName() != null)
-                .GroupBy(e => e.GetTableName()!)
-                .ToDictionary(g => g.Key, g =>
-                {
-                    var store = StoreObjectIdentifier.Table(g.Key, null);
-                    return g.SelectMany(e => e.GetProperties())
-                        .Select(p => (Column: p.GetColumnName(store), p.Name))
-                        .Where(x => x.Column != null)
-                        .GroupBy(x => x.Column!)
-                        .ToDictionary(x => x.Key, x => x.First().Name);
-                });
-
-        // Copies the table's shape (columns, types, NOT NULL) and loads the backup rows into it, column by column
-        private static async Task<long> Restore(NpgsqlConnection conn, string table, JsonElement items, Dictionary<string, string>? jsonNames,
-            List<string> problems, CancellationToken ct)
+        // Copies the table's shape (columns, types, NOT NULL) and loads the backup rows into it by column name
+        private static async Task<long> Restore(NpgsqlConnection conn, string table, JsonElement items, List<string> problems, CancellationToken ct)
         {
-            await Exec(conn, $"CREATE TABLE {Schema}.\"{table}\" (LIKE public.\"{table}\" INCLUDING DEFAULTS);", ct);
-
-            var columns = new List<(string Name, string Type, string Key)>();
-            await using (var cmd = new NpgsqlCommand(
-                "SELECT a.attname, format_type(a.atttypid, a.atttypmod) FROM pg_attribute a " +
-                "JOIN pg_class c ON c.oid = a.attrelid JOIN pg_namespace n ON n.oid = c.relnamespace " +
-                "WHERE n.nspname = @s AND c.relname = @t AND a.attnum > 0 AND NOT a.attisdropped ORDER BY a.attnum", conn))
-            {
-                cmd.Parameters.AddWithValue("s", Schema);
-                cmd.Parameters.AddWithValue("t", table);
-                await using var reader = await cmd.ExecuteReaderAsync(ct);
-                while (await reader.ReadAsync(ct))
-                {
-                    var column = reader.GetString(0);
-                    columns.Add((column, reader.GetString(1), jsonNames?.GetValueOrDefault(column) ?? column));
-                }
-            }
+            var name = table.Replace("\"", "\"\"");
+            await Exec(conn, $"CREATE TABLE {Schema}.\"{name}\" (LIKE public.\"{name}\" INCLUDING DEFAULTS);", ct);
 
             // A column the backup leaves out would come back empty
             if (items.GetArrayLength() > 0)
             {
+                var columns = new List<string>();
+                await using (var cmd = new NpgsqlCommand(
+                    "SELECT column_name FROM information_schema.columns WHERE table_schema = @s AND table_name = @t ORDER BY ordinal_position", conn))
+                {
+                    cmd.Parameters.AddWithValue("s", Schema);
+                    cmd.Parameters.AddWithValue("t", table);
+                    await using var reader = await cmd.ExecuteReaderAsync(ct);
+                    while (await reader.ReadAsync(ct)) columns.Add(reader.GetString(0));
+                }
                 var first = items[0];
-                foreach (var (name, _, _) in columns.Where(c => !first.TryGetProperty(c.Key, out _)))
-                    problems.Add($"{table}.{name} is not in the backup.");
+                foreach (var column in columns.Where(c => !first.TryGetProperty(c, out _)))
+                    problems.Add($"{table}.{column} is not in the backup.");
             }
 
-            var names = string.Join(", ", columns.Select(c => $"\"{c.Name}\""));
-            var values = string.Join(", ", columns.Select(c => $"(r->>'{c.Key.Replace("'", "''")}')::{c.Type}"));
-            await using var insert = new NpgsqlCommand($"INSERT INTO {Schema}.\"{table}\" ({names}) SELECT {values} FROM jsonb_array_elements(@rows) r", conn);
+            await using var insert = new NpgsqlCommand(
+                $"INSERT INTO {Schema}.\"{name}\" SELECT * FROM jsonb_populate_recordset(NULL::{Schema}.\"{name}\", @rows)", conn) { CommandTimeout = 300 };
             insert.Parameters.Add(new NpgsqlParameter("rows", NpgsqlDbType.Jsonb) { Value = items.GetRawText() });
             return await insert.ExecuteNonQueryAsync(ct);
         }
@@ -224,7 +199,7 @@ namespace ShoeFactoryApi.Services
         }
     }
 
-    /// <summary>Runs the restore test every Sunday at 3 AM Pakistan time.</summary>
+    /// <summary>Runs the restore test two minutes after every start (so each deploy is checked) and every Sunday at 3 AM Pakistan time.</summary>
     public class RestoreTestService : BackgroundService
     {
         private readonly IServiceScopeFactory _scopes;
@@ -247,9 +222,9 @@ namespace ShoeFactoryApi.Services
 
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
         {
+            var delay = TimeSpan.FromMinutes(2);
             while (!stoppingToken.IsCancellationRequested)
             {
-                var delay = UntilNextRun(DateTimeOffset.UtcNow);
                 _logger.LogInformation("Next backup restore test in {Delay}.", delay);
                 try { await Task.Delay(delay, stoppingToken); }
                 catch (TaskCanceledException) { return; }
@@ -258,6 +233,7 @@ namespace ShoeFactoryApi.Services
                 var db = scope.ServiceProvider.GetRequiredService<FactoryDbContext>();
                 var result = await RestoreTest.RunAndRecordAsync(db, "system", stoppingToken);
                 _logger.LogInformation("Backup restore test: {Summary}", result.Summary);
+                delay = UntilNextRun(DateTimeOffset.UtcNow);
             }
         }
     }
