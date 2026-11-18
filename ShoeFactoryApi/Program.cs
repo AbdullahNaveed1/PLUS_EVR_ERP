@@ -68,9 +68,6 @@ builder.Services.AddCors(options =>
     options.AddPolicy("AllowAll", policy =>
         policy.AllowAnyOrigin().AllowAnyMethod().AllowAnyHeader()));
 
-// FIX #24 — register the inventory service (was referenced but not registered here)
-builder.Services.AddScoped<IInventoryService, InventoryService>();
-
 // Nightly backup email; stays off until BACKUP_EMAIL_TO / SMTP_USER / SMTP_PASSWORD are set
 builder.Services.AddHostedService<BackupEmailService>();
 // Every Sunday: restores a fresh backup into a temporary schema and checks nothing is missing; emails on failure
