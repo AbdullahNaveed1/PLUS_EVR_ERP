@@ -1375,11 +1375,14 @@ export default function App() {
         credit: numberOrZero(r.total)
       }))
 
-    // Same day: bills first, then returns, then payments, each in the order they were entered
+    // Same day: bills first (in bill-book order), then returns, then payments in the order they were entered
     const kindOrder = { bill: 0, return: 1, payment: 2 }
+    const billNumber = no => { const m = String(no || '').trim().match(/^\d+/); return m ? Number(m[0]) : -1 }
     const allEntries = [...billEntries, ...returnEntries, ...paymentEntries].sort((a, b) =>
       a.date.localeCompare(b.date) ||
-      (a.kind === b.kind ? a.sortId - b.sortId : kindOrder[a.kind] - kindOrder[b.kind]))
+      kindOrder[a.kind] - kindOrder[b.kind] ||
+      (a.kind === 'bill' ? billNumber(a.billNo) - billNumber(b.billNo) || a.billNo.localeCompare(b.billNo) : 0) ||
+      a.sortId - b.sortId)
 
     let balance = numberOrZero(customer.balance)
     allEntries.filter(e => e.date < from).forEach(e => { balance += e.debit - e.credit })

@@ -23,10 +23,14 @@ namespace ShoeFactoryApi.Controllers
         [HttpGet]
         public async Task<ActionResult<IEnumerable<object>>> GetSales()
         {
-            var sales = await _context.Sales
-                .OrderByDescending(s => s.Date).ThenByDescending(s => s.Id)
-                .ToListAsync();
-            return sales.Select(ToResponse).ToList();
+            var sales = await _context.Sales.ToListAsync();
+            // Newest bill date first, then by the number in the bill book, so saving or editing never moves a bill
+            return sales
+                .OrderByDescending(s => BillDay(s.Date))
+                .ThenByDescending(s => BillNumber(s.BillNo))
+                .ThenByDescending(s => s.BillNo, StringComparer.OrdinalIgnoreCase)
+                .ThenByDescending(s => s.Id)
+                .Select(ToResponse).ToList();
         }
 
         [HttpGet("{id}")]
@@ -283,6 +287,16 @@ namespace ShoeFactoryApi.Controllers
         private static string? GetString(JsonElement el, string name)
             => el.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() : null;
 
+        // The bill's day in Pakistan time (older bills were saved with the time they were typed in)
+        private static DateOnly BillDay(DateTime date) => DateOnly.FromDateTime(date.AddHours(5));
+
+        // Leading number of a bill-book number ("1452", "41A"); -1 when there is none
+        private static long BillNumber(string? billNo)
+        {
+            var digits = new string((billNo ?? string.Empty).Trim().TakeWhile(char.IsDigit).ToArray());
+            return long.TryParse(digits, out var n) ? n : -1;
+        }
+
         private static object ToResponse(Sale sale)
         {
             object lineItems;
@@ -301,7 +315,7 @@ namespace ShoeFactoryApi.Controllers
                 transportCompany = sale.TransportCompany,
                 builtyNo = sale.BuiltyNo,
                 billNo = sale.BillNo,
-                date = sale.Date.ToString("yyyy-MM-dd"),
+                date = BillDay(sale.Date).ToString("yyyy-MM-dd"),
                 lineItems
             };
         }
