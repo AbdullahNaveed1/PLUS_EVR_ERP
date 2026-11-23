@@ -33,6 +33,9 @@ const toLine = item => {
 
 export default function EditBillModal({ sale, inventory, onSave, onClose }) {
   const [billNo, setBillNo] = useState(sale.billNo || '')
+  const [billDate, setBillDate] = useState(sale.date || '')
+  const today = new Date().toLocaleDateString('en-CA')
+  const dateError = !billDate ? 'Pick the bill date' : billDate > today ? "Can't be in the future" : ''
   const [transportCompany, setTransportCompany] = useState(sale.transportCompany === 'N/A' ? '' : sale.transportCompany || '')
   const [builtyNo, setBuiltyNo] = useState(sale.builtyNo === 'N/A' ? '' : sale.builtyNo || '')
   const [lines, setLines] = useState(() => (sale.lineItems || []).map(toLine))
@@ -79,7 +82,7 @@ export default function EditBillModal({ sale, inventory, onSave, onClose }) {
 
   const handleSave = async () => {
     setSubmitted(true)
-    if (hasErrors || saving) return
+    if (hasErrors || dateError || saving) return
     setSaving(true)
     setError('')
     try {
@@ -101,6 +104,7 @@ export default function EditBillModal({ sale, inventory, onSave, onClose }) {
       await onSave({
         ...sale,
         billNo: billNo.trim(),
+        date: billDate,
         transportCompany: transportCompany.trim() || 'N/A',
         builtyNo: builtyNo.trim() || 'N/A',
         lineItems
@@ -118,12 +122,17 @@ export default function EditBillModal({ sale, inventory, onSave, onClose }) {
       <div className="em-modal-backdrop" role="presentation" onClick={close}>
         <div className="em-modal em-modal-wide" role="dialog" aria-modal="true" aria-labelledby="eb-title" onClick={e => e.stopPropagation()}>
           <h4 id="eb-title">✏️ Edit bill — {sale.customer}</h4>
-          <p className="em-muted">Bill date {sale.date}. Changing quantities, sizes or where a line is sent from also updates Saggian stock.</p>
+          <p className="em-muted">Changing quantities, sizes or where a line is sent from also updates Saggian stock.</p>
 
           <div className="em-grid">
             <label className="em-field">
               <span className="em-label">Bill No</span>
               <input value={billNo} onChange={e => setBillNo(e.target.value)} />
+            </label>
+            <label className="em-field">
+              <span className="em-label">Bill date</span>
+              <input type="date" value={billDate} max={today} aria-invalid={submitted && !!dateError} onChange={e => setBillDate(e.target.value)} />
+              {submitted && dateError && <span className="em-error">{dateError}</span>}
             </label>
             <label className="em-field">
               <span className="em-label">Transport company</span>

@@ -227,6 +227,8 @@ export default function App() {
   const [transportCompany, setTransportCompany] = useState('')
   const [builtyNo, setBuiltyNo] = useState('')
   const [billNo, setBillNo] = useState('')
+  // Date on the paper bill; bills are typed in once a week, so it is picked every time
+  const [billDate, setBillDate] = useState('')
 
   const [cartItems, setCartItems] = useState([
     { productId: '', model: '', size: '', qty: '', unitType: 'dozens', price: '', facility: 'Saggian' }
@@ -703,6 +705,10 @@ export default function App() {
       alert('Please enter the Bill No from your physical bill book.')
       return
     }
+    if (!billDate) {
+      alert('Please pick the Bill Date written on the paper bill.')
+      return
+    }
 
     let grossTotal = 0;
 
@@ -747,7 +753,7 @@ export default function App() {
       transportCompany: transportCompany || 'N/A',
       builtyNo: builtyNo || 'N/A',
       billNo: billNo.trim(),
-      date: new Date().toISOString()
+      date: billDate
     }
 
     try {
@@ -779,6 +785,7 @@ export default function App() {
     setTransportCompany('')
     setBuiltyNo('')
     setBillNo('')
+    setBillDate('')
     setCartItems([{ productId: '', model: '', size: '', qty: '', unitType: 'dozens', price: '', facility: 'Saggian' }])
   }
 
@@ -2665,6 +2672,18 @@ export default function App() {
                     placeholder="e.g. 1452"
                     value={billNo}
                     onChange={e => setBillNo(e.target.value)}
+                    required
+                    style={{ padding: '10px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '14px', width: '100%', boxSizing: 'border-box', fontWeight: '700' }}
+                  />
+                </div>
+
+                <div>
+                  <label style={{ display: 'block', fontSize: '12px', fontWeight: '700', color: '#475569', marginBottom: '5px' }}>Bill Date (on the paper bill) *</label>
+                  <input
+                    type="date"
+                    value={billDate}
+                    max={new Date().toLocaleDateString('en-CA')}
+                    onChange={e => setBillDate(e.target.value)}
                     required
                     style={{ padding: '10px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '14px', width: '100%', boxSizing: 'border-box', fontWeight: '700' }}
                   />

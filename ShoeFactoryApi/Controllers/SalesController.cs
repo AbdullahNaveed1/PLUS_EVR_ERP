@@ -53,7 +53,7 @@ namespace ShoeFactoryApi.Controllers
                 var from = sale.Date.AddMinutes(-2);
                 var to = sale.Date.AddMinutes(2);
                 if (await _context.Sales.AnyAsync(s => s.CustomerId == sale.CustomerId && s.BillNo == sale.BillNo && s.Total == sale.Total && s.Date >= from && s.Date <= to))
-                    return Conflict(new { message = $"Bill {sale.BillNo} for {sale.Customer} was already saved a moment ago. Check the bill list before saving it again." });
+                    return Conflict(new { message = $"Bill {sale.BillNo} for {sale.Customer} with this date and total is already saved. Check the bill list before saving it again." });
             }
 
             // Another bill changing the same stock at the same moment: read the stock again and retry,
@@ -193,11 +193,17 @@ namespace ShoeFactoryApi.Controllers
             var billNo = GetString(payload, "billNo")?.Trim();
             if (!string.IsNullOrEmpty(billNo)) sale.BillNo = billNo;
             else if (sale.Id == 0) { error = "billNo is required."; return false; }
-            // Read as UTC whatever the server's own time zone is ("...Z" from the browser, or a plain date)
-            sale.Date = payload.TryGetProperty("date", out var dt) &&
-                        DateTime.TryParse(dt.GetString(), CultureInfo.InvariantCulture, DateTimeStyles.AdjustToUniversal | DateTimeStyles.AssumeUniversal, out var parsed)
-                ? DateTime.SpecifyKind(parsed, DateTimeKind.Utc)
-                : DateTime.UtcNow;
+            // The date on the paper bill (bills are typed in days later): required on new bills, never in the future.
+            // Read as UTC whatever the server's own time zone is ("2026-11-20" from the form, or "...Z")
+            if (payload.TryGetProperty("date", out var dt) && dt.ValueKind == JsonValueKind.String &&
+                DateTime.TryParse(dt.GetString(), CultureInfo.InvariantCulture, DateTimeStyles.AdjustToUniversal | DateTimeStyles.AssumeUniversal, out var parsed))
+            {
+                var billDate = DateTime.SpecifyKind(parsed, DateTimeKind.Utc);
+                if (DateOnly.FromDateTime(billDate.AddHours(5)) > DateOnly.FromDateTime(DateTime.UtcNow.AddHours(5)))
+                { error = "The bill date can't be in the future."; return false; }
+                sale.Date = billDate;
+            }
+            else if (sale.Id == 0) { error = "Pick the bill date."; return false; }
 
             if (!payload.TryGetProperty("lineItems", out var itemsEl) || itemsEl.ValueKind != JsonValueKind.Array)
             { error = "lineItems must be an array."; return false; }
