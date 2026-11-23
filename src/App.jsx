@@ -30,6 +30,9 @@ const getInvoiceNumber = sale => {
   return `${customer || 'Customer'}-${builty || 'N-A'}`
 }
 
+// Bill date as written on the paper bill: 2026-11-15 -> 15-11-2026
+const billDateText = date => (date ? String(date).split('T')[0].split('-').reverse().join('-') : '')
+
 const getProductPrice = (product, region) => {
   const regionalPrice = region === 'Sindh' ? product?.priceSindh : product?.pricePunjab
   const fallbackPrice = region === 'Sindh' ? product?.pricePunjab : product?.priceSindh
@@ -229,6 +232,8 @@ export default function App() {
   const [billNo, setBillNo] = useState('')
   // Date on the paper bill; bills are typed in once a week, so it is picked every time
   const [billDate, setBillDate] = useState('')
+  // Transporter filled in from the customer's last bill (replaced when another customer is picked, unless typed over)
+  const [autoTransport, setAutoTransport] = useState('')
 
   const [cartItems, setCartItems] = useState([
     { productId: '', model: '', size: '', qty: '', unitType: 'dozens', price: '', facility: 'Saggian' }
@@ -427,6 +432,17 @@ export default function App() {
     })
     return map
   }, [sales])
+
+  const transporterOptions = useMemo(() => {
+    const clean = s => (s.transportCompany || '').trim()
+    const used = s => clean(s) && clean(s).toUpperCase() !== 'N/A'
+    const mine = sales.filter(s => s.customerId === saleCustomerUniqueId && used(s)).map(clean)
+    const count = new Map()
+    sales.filter(used).forEach(s => count.set(clean(s), (count.get(clean(s)) || 0) + 1))
+    const others = [...count.entries()].sort((x, y) => y[1] - x[1]).map(([name]) => name)
+    const seen = new Set()
+    return [...mine, ...others].filter(name => !seen.has(name.toLowerCase()) && seen.add(name.toLowerCase()))
+  }, [sales, saleCustomerUniqueId])
 
   const inventoryWithTrueStock = useMemo(() => {
     return inventory.map(item => {
@@ -783,6 +799,7 @@ export default function App() {
     setSaleCustomerName('')
     setSaleCustomerUniqueId('')
     setTransportCompany('')
+    setAutoTransport('')
     setBuiltyNo('')
     setBillNo('')
     setBillDate('')
@@ -914,7 +931,7 @@ export default function App() {
               <h3 style="margin: 0 0 4px 0; color: #1e293b;">WHOLESALE INVOICE</h3>
               <div><strong>Invoice No:</strong> ${invoiceNumber}</div>
               <div><strong>Bill No:</strong> ${saleRecord.billNo || 'N/A'}</div>
-              <div><strong>Date:</strong> ${saleRecord.date}</div>
+              <div><strong>Bill Date:</strong> ${billDateText(saleRecord.date)}</div>
               <div><strong>Region:</strong> ${saleRecord.region || 'Punjab'}</div>
             </div>
           </div>
@@ -1067,7 +1084,7 @@ export default function App() {
               <h3 style="margin: 0 0 4px 0; color: #1e293b;">WHOLESALE INVOICE</h3>
               <div><strong>Invoice No:</strong> ${invoiceNumber}</div>
               <div><strong>Bill No:</strong> ${saleRecord.billNo || 'N/A'}</div>
-              <div><strong>Date:</strong> ${saleRecord.date}</div>
+              <div><strong>Bill Date:</strong> ${billDateText(saleRecord.date)}</div>
               <div><strong>Region:</strong> ${saleRecord.region || 'Punjab'}</div>
             </div>
           </div>
@@ -1136,7 +1153,7 @@ export default function App() {
 
       return `
         <section class="invoice">
-          <header><div><h1>PLUS EVR ERP Factory</h1><div>Wholesale Footwear Manufacturing & Ledger</div></div><div><strong>Invoice No:</strong> ${invoiceNumber}<br><strong>Bill No:</strong> ${sale.billNo || 'N/A'}<br><strong>Date:</strong> ${sale.date}<br><strong>Region:</strong> ${sale.region || 'Punjab'}</div></header>
+          <header><div><h1>PLUS EVR ERP Factory</h1><div>Wholesale Footwear Manufacturing & Ledger</div></div><div><strong>Invoice No:</strong> ${invoiceNumber}<br><strong>Bill No:</strong> ${sale.billNo || 'N/A'}<br><strong>Bill Date:</strong> ${billDateText(sale.date)}<br><strong>Region:</strong> ${sale.region || 'Punjab'}</div></header>
           <div class="meta"><strong>Customer:</strong> ${sale.customer} (${sale.customerId || 'N/A'}) <span><strong>Transport:</strong> ${sale.transportCompany || 'N/A'} | <strong>Builty No:</strong> ${sale.builtyNo || 'N/A'}</span></div>
           <table><thead><tr><th>#</th><th>Item No.</th><th>Description</th><th>Quantity</th><th>Bill Rate/Pair</th><th>Bill Rate</th></tr></thead><tbody>${items}</tbody></table>
           <div class="total"><strong>Bill Rate Total: Rs. ${numberOrZero(sale.rawTotal || sale.total).toLocaleString()}</strong>${sale.discount > 0 ? `<br>Discount Applied Later: - Rs. ${numberOrZero(sale.discount).toLocaleString()}<br><strong>Net Payable: Rs. ${numberOrZero(sale.total).toLocaleString()}</strong>` : ''}</div>
@@ -1203,7 +1220,7 @@ export default function App() {
       `-----------------------------------\n` +
       `👤 *Customer:* ${saleRecord.customer} (${saleRecord.customerId || 'N/A'})\n` +
       `🧾 *Bill No:* ${saleRecord.billNo || 'N/A'}\n` +
-      `📅 *Date:* ${saleRecord.date}\n` +
+      `📅 *Bill Date:* ${billDateText(saleRecord.date)}\n` +
       `🚚 *Transport:* ${saleRecord.transportCompany || 'N/A'}\n` +
       `📦 *Builty No:* ${saleRecord.builtyNo || 'N/A'}\n` +
       `${saleRecord.discount > 0 ? '🟢 *Net Payable*' : '🟢 *Bill Rate Total*'}: *Rs. ${(saleRecord.discount > 0 ? saleRecord.total : (saleRecord.rawTotal || saleRecord.total)).toLocaleString()}*\n` +
@@ -2583,6 +2600,12 @@ export default function App() {
                         setSaleCustomerName(found.name);
                         setSaleCustomerUniqueId(found.phone);
                         setSaleCustomerRegion(found.region || 'Punjab');
+                        // Suggest the transporter of this customer's latest bill (bills are newest first)
+                        const lastTransport = sales.find(s => s.customerId === found.phone && s.transportCompany && s.transportCompany !== 'N/A')?.transportCompany || '';
+                        if (!transportCompany.trim() || transportCompany === autoTransport) {
+                          setTransportCompany(lastTransport);
+                          setAutoTransport(lastTransport);
+                        }
 
                         const updatedCart = cartItems.map(item => {
                           const prod = inventory.find(p => p.id.toString() === item.productId.toString())
@@ -2653,8 +2676,15 @@ export default function App() {
                     placeholder="e.g. Niazi Express / Daewoo"
                     value={transportCompany}
                     onChange={e => setTransportCompany(e.target.value)}
+                    list="transporter-options"
                     style={{ padding: '10px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '14px', width: '100%', boxSizing: 'border-box' }}
                   />
+                  <datalist id="transporter-options">
+                    {transporterOptions.map(name => <option key={name} value={name} />)}
+                  </datalist>
+                  {transportCompany && transportCompany === autoTransport && (
+                    <div style={{ fontSize: '11px', color: '#64748b', marginTop: '4px' }}>From this customer's last bill; change it if needed.</div>
+                  )}
                 </div>
 
                 <div>
