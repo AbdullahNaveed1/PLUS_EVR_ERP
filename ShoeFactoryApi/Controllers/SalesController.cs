@@ -23,14 +23,10 @@ namespace ShoeFactoryApi.Controllers
         [HttpGet]
         public async Task<ActionResult<IEnumerable<object>>> GetSales()
         {
-            var sales = await _context.Sales.ToListAsync();
-            // Newest bill date first, then by the number in the bill book, so saving or editing never moves a bill
-            return sales
-                .OrderByDescending(s => BillDay(s.Date))
-                .ThenByDescending(s => BillNumber(s.BillNo))
-                .ThenByDescending(s => s.BillNo, StringComparer.OrdinalIgnoreCase)
-                .ThenByDescending(s => s.Id)
-                .Select(ToResponse).ToList();
+            // In the order they were entered, latest first, like a queue: editing a bill or changing its date
+            // never moves it (the khata orders by bill date on its own)
+            var sales = await _context.Sales.OrderByDescending(s => s.Id).ToListAsync();
+            return sales.Select(ToResponse).ToList();
         }
 
         [HttpGet("{id}")]
@@ -289,13 +285,6 @@ namespace ShoeFactoryApi.Controllers
 
         // The bill's day in Pakistan time (older bills were saved with the time they were typed in)
         private static DateOnly BillDay(DateTime date) => DateOnly.FromDateTime(date.AddHours(5));
-
-        // Leading number of a bill-book number ("1452", "41A"); -1 when there is none
-        private static long BillNumber(string? billNo)
-        {
-            var digits = new string((billNo ?? string.Empty).Trim().TakeWhile(char.IsDigit).ToArray());
-            return long.TryParse(digits, out var n) ? n : -1;
-        }
 
         private static object ToResponse(Sale sale)
         {
