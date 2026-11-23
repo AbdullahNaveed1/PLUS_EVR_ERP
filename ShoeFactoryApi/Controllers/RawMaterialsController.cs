@@ -44,16 +44,27 @@ namespace ShoeFactoryApi.Controllers
             return CreatedAtAction(nameof(GetById), new { id = input.Id }, input);
         }
 
+        public class RawMaterialUpdate
+        {
+            public string? Name { get; set; }
+            public string? Unit { get; set; }
+            public decimal? UnitCost { get; set; }
+            public decimal? StockQty { get; set; }
+            public string? Notes { get; set; }
+        }
+
         [HttpPut("{id:int}")]
-        public async Task<IActionResult> Update(int id, [FromBody] RawMaterial input)
+        public async Task<IActionResult> Update(int id, [FromBody] RawMaterialUpdate input)
         {
             var existing = await _db.RawMaterials.FindAsync(id);
             if (existing == null) return NotFound();
 
-            existing.Name = input.Name;
-            existing.Unit = input.Unit;
-            existing.UnitCost = input.UnitCost;
-            existing.StockQty = input.StockQty;
+            existing.Name = input.Name ?? existing.Name;
+            existing.Unit = input.Unit ?? existing.Unit;
+            existing.UnitCost = input.UnitCost ?? existing.UnitCost;
+            // Only a stock figure that was typed in (a count) replaces the stock; leaving it out keeps the live
+            // figure, so editing a name or cost can't undo deliveries or production use saved meanwhile
+            if (input.StockQty.HasValue) existing.StockQty = input.StockQty.Value;
             existing.Notes = input.Notes;
 
             await _db.SaveChangesAsync();

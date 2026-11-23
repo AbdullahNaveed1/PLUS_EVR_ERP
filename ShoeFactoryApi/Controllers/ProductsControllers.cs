@@ -6,6 +6,11 @@ using ShoeFactoryApi.Models;
 
 namespace ShoeFactoryApi.Controllers
 {
+    public class AddStockInput
+    {
+        public decimal Pairs { get; set; }
+    }
+
     [Authorize]
     [Route("api/products")]
     [ApiController]
@@ -74,12 +79,14 @@ namespace ShoeFactoryApi.Controllers
             existing.Model = product.Model;
             existing.Size = product.Size;
             existing.Color = product.Color;
-            existing.Qty = product.Qty;               // live stock, no clamp here — deduction path enforces
+            // Stock is NOT taken from here: a screen opened before a bill or production was saved would send an
+            // old figure and wipe those out. Stock changes through bills, production, returns and add-stock only.
+            var priceChanged = existing.PricePunjab != product.PricePunjab || existing.PriceSindh != product.PriceSindh;
             existing.PricePunjab = product.PricePunjab;
             existing.PriceSindh = product.PriceSindh;
             // existing.ArticleId deliberately NOT touched
 
-            if (existing.PricePunjab != product.PricePunjab || existing.PriceSindh != product.PriceSindh)
+            if (priceChanged)
             {
                 _context.ProductPriceHistories.Add(new ProductPriceHistory
                 {
@@ -97,6 +104,29 @@ namespace ShoeFactoryApi.Controllers
                 throw;
             }
             return NoContent();
+        }
+
+        // Adds received pairs to whatever stock the server has now (Stock & Pricing "add stock")
+        [HttpPost("{id}/add-stock")]
+        public async Task<IActionResult> AddStock(int id, [FromBody] AddStockInput input)
+        {
+            if (input.Pairs <= 0 || input.Pairs != Math.Floor(input.Pairs)) return BadRequest(new { message = "Enter a whole number of pairs to add." });
+            for (var attempt = 1; ; attempt++)
+            {
+                var product = await _context.Products.FindAsync(id);
+                if (product == null) return NotFound();
+                product.Qty += (int)input.Pairs;
+                try
+                {
+                    await _context.SaveChangesAsync();
+                    return Ok(new { product.Id, product.Qty });
+                }
+                // A bill or production changed the same stock at that moment: read it again and add once more
+                catch (DbUpdateConcurrencyException) when (attempt < 5)
+                {
+                    _context.ChangeTracker.Clear();
+                }
+            }
         }
 
         [HttpDelete("{id}")]

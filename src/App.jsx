@@ -555,18 +555,8 @@ export default function App() {
     }
 
     try {
-      const updatedProduct = {
-        id: item.id,
-        articleNumber: item.articleNumber || item.model,
-        model: item.model,
-        size: item.size,
-        color: item.color,
-        qty: Number(item.rawQty || item.qty || 0) + incomingQty,
-        price: Number(item.pricePunjab ?? item.price ?? 0),
-        pricePunjab: Number(item.pricePunjab ?? item.price ?? 0),
-        priceSindh: Number(item.priceSindh ?? item.price ?? 0)
-      }
-      await axios.put(`${API_BASE_URL}/api/products/${item.id}`, updatedProduct, { headers: authHeaders() })
+      // The server adds these pairs to its own current stock (never this screen's copy, which may be old)
+      await axios.post(`${API_BASE_URL}/api/products/${item.id}/add-stock`, { pairs: incomingQty }, { headers: authHeaders() })
 
       setUpdateStockInputs({ ...updateStockInputs, [item.id]: '' })
       fetchAllData()
@@ -586,7 +576,6 @@ export default function App() {
         model: item.model,
         size: item.size,
         color: item.color,
-        qty: Number(item.rawQty || item.qty || 0),
         pricePunjab: Number(priceInputs.punjab ?? item.pricePunjab ?? item.price ?? 0),
         priceSindh: Number(priceInputs.sindh ?? item.priceSindh ?? item.price ?? 0)
       }, { headers: authHeaders() })
@@ -1627,7 +1616,8 @@ export default function App() {
       name: inputs.name !== undefined ? inputs.name : existing.name,
       unit: inputs.unit !== undefined ? inputs.unit : existing.unit,
       unitCost: inputs.unitCost !== undefined ? Number(inputs.unitCost) : existing.unitCost,
-      stockQty: inputs.stockQty !== undefined ? Number(inputs.stockQty) : existing.stockQty,
+      // Stock is sent only when a new figure was typed; otherwise the server keeps its live stock
+      ...(inputs.stockQty !== undefined && inputs.stockQty !== '' ? { stockQty: Number(inputs.stockQty) } : {}),
       notes: inputs.notes !== undefined ? inputs.notes : existing.notes
     }
     try {
