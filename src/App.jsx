@@ -819,7 +819,8 @@ export default function App() {
     if (!confirmed) return
 
     try {
-      await Promise.all(selectedBills.map(sale => axios.delete(`${API_BASE_URL}/api/sales/${sale.id}`, { headers: authHeaders() })))
+      // One at a time: deleting bills of the same article at the same moment lost stock on 14-11-2026
+      for (const sale of selectedBills) await axios.delete(`${API_BASE_URL}/api/sales/${sale.id}`, { headers: authHeaders() })
       setSales(currentSales => currentSales.filter(sale => !selectedSaleIds.includes(sale.id)))
       setSelectedSaleIds([])
       // Deleted bills put their pairs back into stock on the server
