@@ -761,8 +761,18 @@ export default function App() {
       date: billDate
     }
 
+    const postBill = confirmWarnings => axios.post(`${API_BASE_URL}/api/sales`, { ...newRecord, confirmWarnings }, { headers: authHeaders() })
     try {
-      const response = await axios.post(`${API_BASE_URL}/api/sales`, newRecord, { headers: authHeaders() })
+      let response
+      try {
+        response = await postBill(false)
+      } catch (err) {
+        // Likely duplicate or stock going below zero: the server saves only after the user confirms
+        const check = err.response?.status === 409 && err.response.data?.needsConfirm ? err.response.data : null
+        if (!check) throw err
+        if (!window.confirm(`${check.message}\n\n• ${check.warnings.join('\n• ')}\n\nSave this bill anyway?`)) return
+        response = await postBill(true)
+      }
       const normalizedNewSale = normalizeSale(response.data)
 
       setSales(prevSales => [normalizedNewSale, ...prevSales])
@@ -2386,7 +2396,7 @@ export default function App() {
                                   })
                                   .catch(err => {
                                     console.error('Error saving payment:', err);
-                                    alert(`Failed to save payment (HTTP ${err.response?.status || 'network'}).`);
+                                    alert(err.response?.data?.message || `Failed to save payment (HTTP ${err.response?.status || 'network'}).`);
                                   })
                                   .finally(() => {
                                     paymentSavingRef.current.delete(c.id);

@@ -54,6 +54,12 @@ namespace ShoeFactoryApi.Controllers
                 payment.Date = DateTime.SpecifyKind(payment.Date, DateTimeKind.Utc);
             }
 
+            // A double-click or a retry sends the same payment again within seconds: keep only the first
+            var from = payment.Date.AddMinutes(-2);
+            var to = payment.Date.AddMinutes(2);
+            if (await _context.Payments.AnyAsync(p => p.CustomerId == payment.CustomerId && p.Amount == payment.Amount && p.Date >= from && p.Date <= to))
+                return Conflict(new { message = $"Rs {payment.Amount:N0} from {payment.Customer} was already saved a moment ago." });
+
             _context.Payments.Add(payment);
             await _context.SaveChangesAsync();
 

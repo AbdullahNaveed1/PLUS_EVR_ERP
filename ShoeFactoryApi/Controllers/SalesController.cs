@@ -54,6 +54,14 @@ namespace ShoeFactoryApi.Controllers
                 var to = sale.Date.AddMinutes(2);
                 if (await _context.Sales.AnyAsync(s => s.CustomerId == sale.CustomerId && s.BillNo == sale.BillNo && s.Total == sale.Total && s.Date >= from && s.Date <= to))
                     return Conflict(new { message = $"Bill {sale.BillNo} for {sale.Customer} with this date and total is already saved. Check the bill list before saving it again." });
+
+                // Every line must be an article size from Stock & Pricing, or its pairs never leave stock
+                if (await UnlinkedLine(sale) is { } unlinked) return BadRequest(new { message = unlinked });
+
+                // Likely duplicates and stock going below zero are saved only after the user confirms
+                var confirmed = payload.TryGetProperty("confirmWarnings", out var c) && c.ValueKind == JsonValueKind.True;
+                if (!confirmed && await BillWarnings(sale) is { Count: > 0 } warnings)
+                    return Conflict(new { message = "Check this bill before saving:", warnings, needsConfirm = true });
             }
 
             // Another bill changing the same stock at the same moment: read the stock again and retry,
@@ -97,6 +105,49 @@ namespace ShoeFactoryApi.Controllers
 
             await _context.SaveChangesAsync();
             return NoContent();
+        }
+
+        private static List<JsonElement> Items(string json)
+        {
+            try { return JsonSerializer.Deserialize<JsonElement>(json).EnumerateArray().ToList(); }
+            catch (Exception) { return new List<JsonElement>(); }
+        }
+
+        private async Task<string?> UnlinkedLine(Sale sale)
+        {
+            var items = Items(sale.LineItemsJson);
+            var ids = items.Select(i => int.TryParse(ProductIdOf(i), out var id) ? id : 0).ToList();
+            var existing = await _context.Products.Where(p => ids.Contains(p.Id)).Select(p => p.Id).ToListAsync();
+            for (var n = 0; n < items.Count; n++)
+                if (!existing.Contains(ids[n]))
+                    return $"Line {n + 1} ({GetString(items[n], "model")} {GetString(items[n], "size")}) is not an article size from Stock & Pricing. Pick it from the article list.";
+            return null;
+        }
+
+        // Same bill number for this customer, the same items for this customer within 30 days,
+        // or Saggian stock going below zero: each is usually a mistake, so the user confirms first
+        private async Task<List<string>> BillWarnings(Sale sale)
+        {
+            var warnings = new List<string>();
+            string Day(DateTime d) => DateOnly.FromDateTime(d.AddHours(5)).ToString("dd-MM-yyyy");
+            static string Signature(string json) => string.Join("|", Items(json)
+                .Select(i => $"{ProductIdOf(i)}:{GetDecimal(i, "pairs"):0.##}:{GetDecimal(i, "price"):0.##}").OrderBy(x => x));
+
+            var earlier = await _context.Sales.AsNoTracking().Where(s => s.CustomerId == sale.CustomerId).ToListAsync();
+            foreach (var same in earlier.Where(s => string.Equals(s.BillNo.Trim(), sale.BillNo.Trim(), StringComparison.OrdinalIgnoreCase)))
+                warnings.Add($"Bill {same.BillNo} for {sale.Customer} is already saved ({Day(same.Date)}, Rs {same.Total:N0}).");
+            var signature = Signature(sale.LineItemsJson);
+            foreach (var same in earlier.Where(s => !string.Equals(s.BillNo.Trim(), sale.BillNo.Trim(), StringComparison.OrdinalIgnoreCase)
+                                                    && Math.Abs((s.Date - sale.Date).TotalDays) <= 30 && Signature(s.LineItemsJson) == signature))
+                warnings.Add($"A bill with exactly the same items for {sale.Customer} is already saved: bill {same.BillNo}, {Day(same.Date)}, Rs {same.Total:N0}.");
+
+            foreach (var (productId, pairs) in PairsByProduct(sale.LineItemsJson) ?? new Dictionary<int, decimal>())
+            {
+                var product = await _context.Products.AsNoTracking().FirstOrDefaultAsync(p => p.Id == productId);
+                if (product != null && product.Qty - pairs < 0)
+                    warnings.Add($"{product.ArticleNumber} {product.Size}{(string.IsNullOrWhiteSpace(product.Color) ? "" : " " + product.Color)}: Saggian stock is {product.Qty} pairs, this bill takes {pairs:0} (stock would be {product.Qty - pairs:0}). Is its production entered?");
+            }
+            return warnings;
         }
 
         // Stock goes down by the pairs billed now and back up by the pairs billed before
