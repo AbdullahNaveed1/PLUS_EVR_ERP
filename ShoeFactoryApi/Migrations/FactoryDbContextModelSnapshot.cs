@@ -361,6 +361,9 @@ namespace ShoeFactoryApi.Migrations
                         .HasMaxLength(100)
                         .HasColumnType("character varying(100)");
 
+                    b.Property<DateTime?>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
                     b.Property<string>("Customer")
                         .IsRequired()
                         .HasColumnType("text");

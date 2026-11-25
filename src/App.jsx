@@ -207,6 +207,8 @@ export default function App() {
   const [newExp, setNewExp] = useState({ category: '', amount: '', notes: '', date: new Date().toISOString().split('T')[0] })
 
   const [paymentInputs, setPaymentInputs] = useState({})
+  // Date each payment was received, from the paper (cash is typed in days later)
+  const [paymentDates, setPaymentDates] = useState({})
   // Customer ids whose cash payment is being saved; a ref so a fast double-click can't slip through
   const paymentSavingRef = useRef(new Set())
   // Saves still running; a second click on the same form does nothing (double-clicks made duplicate entries)
@@ -232,6 +234,8 @@ export default function App() {
   const [billNo, setBillNo] = useState('')
   // Date on the paper bill; bills are typed in once a week, so it is picked every time
   const [billDate, setBillDate] = useState('')
+  // Total written on the paper bill; the bill saves only when the lines add up to it
+  const [paperTotal, setPaperTotal] = useState('')
   // Transporter filled in from the customer's last bill (replaced when another customer is picked, unless typed over)
   const [autoTransport, setAutoTransport] = useState('')
 
@@ -714,6 +718,10 @@ export default function App() {
       alert('Please pick the Bill Date written on the paper bill.')
       return
     }
+    if (!(Number(paperTotal) > 0)) {
+      alert('Please enter the total written on the paper bill.')
+      return
+    }
 
     let grossTotal = 0;
 
@@ -758,7 +766,8 @@ export default function App() {
       transportCompany: transportCompany || 'N/A',
       builtyNo: builtyNo || 'N/A',
       billNo: billNo.trim(),
-      date: billDate
+      date: billDate,
+      paperTotal: Number(paperTotal)
     }
 
     const postBill = confirmWarnings => axios.post(`${API_BASE_URL}/api/sales`, { ...newRecord, confirmWarnings }, { headers: authHeaders() })
@@ -802,6 +811,7 @@ export default function App() {
     setBuiltyNo('')
     setBillNo('')
     setBillDate('')
+    setPaperTotal('')
     setCartItems([{ productId: '', model: '', size: '', qty: '', unitType: 'dozens', price: '', facility: 'Saggian' }])
   }
 
@@ -1444,6 +1454,16 @@ export default function App() {
       await fetchAllData()
     } catch (err) {
       throw new Error(err.response?.data?.message || 'Failed to delete the return.', { cause: err })
+    }
+  }
+
+  // Admin only (the API also enforces this): puts a payment on the date the cash was really received
+  const handleChangePaymentDate = async (paymentId, date) => {
+    try {
+      await axios.post(`${API_BASE_URL}/api/payments/${paymentId}/date`, { date }, { headers: authHeaders(), showsOwnError: true })
+      await fetchAllData()
+    } catch (err) {
+      throw new Error(err.response?.data?.message || 'Failed to change the payment date.', { cause: err })
     }
   }
 
@@ -2260,6 +2280,7 @@ export default function App() {
             onBack={() => setHistoryCustomerId(null)}
             canDeletePayments={role === 'Admin'}
             onDeletePayment={handleDeletePayment}
+            onChangePaymentDate={role === 'Admin' ? handleChangePaymentDate : null}
             onCancelPayment={e => askCancel('Cancel this payment?', `Rs. ${numberOrZero(e.credit).toLocaleString()} from ${historyCustomer.name}. The customer's balance goes back up by this amount.`, [`/api/payments/${e.sortId}/cancel`])}
             canEditBills={role === 'Admin'}
             onEditBill={setEditingBill}
@@ -2368,6 +2389,15 @@ export default function App() {
                               onChange={e => setPaymentInputs({...paymentInputs, [c.id]: e.target.value})}
                               style={{ padding: '6px 8px', borderRadius: '4px', border: '1px solid #cbd5e1', width: '90px', fontSize: '13px' }}
                             />
+                            <input
+                              type="date"
+                              aria-label="Date received"
+                              title="Date the cash was received"
+                              value={paymentDates[c.id] || ''}
+                              max={new Date().toLocaleDateString('en-CA')}
+                              onChange={e => setPaymentDates({...paymentDates, [c.id]: e.target.value})}
+                              style={{ padding: '5px 6px', borderRadius: '4px', border: '1px solid #cbd5e1', fontSize: '12px' }}
+                            />
                             <button
                               disabled={savingPaymentFor === c.id}
                               onClick={() => {
@@ -2378,6 +2408,11 @@ export default function App() {
                                   alert("Please enter a valid cash amount.");
                                   return;
                                 }
+                                const receivedOn = paymentDates[c.id];
+                                if (!receivedOn) {
+                                  alert("Please pick the date the cash was received.");
+                                  return;
+                                }
                                 paymentSavingRef.current.add(c.id);
                                 setSavingPaymentFor(c.id);
 
@@ -2385,13 +2420,14 @@ export default function App() {
                                   customerId: c.phone,
                                   customer: c.name,
                                   amount: amount,
-                                  date: new Date().toISOString()
+                                  date: receivedOn
                                 };
 
                                 axios.post(`${API_BASE_URL}/api/payments`, newPaymentRecord, { headers: authHeaders() })
                                   .then(response => {
                                     setPayments(prev => [...prev, response.data]);
                                     setPaymentInputs({...paymentInputs, [c.id]: ''});
+                                    setPaymentDates({...paymentDates, [c.id]: ''});
                                     fetchAllData();
                                   })
                                   .catch(err => {
@@ -2822,6 +2858,25 @@ export default function App() {
               >
                 + Add Another Article
               </button>
+
+              {(() => {
+                const linesTotal = cartItems.reduce((acc, row) => acc + Number(row.qty || 0) * (row.unitType === 'dozens' ? 12 : 1) * Number(row.price || 0), 0)
+                const typed = Number(paperTotal)
+                const matches = typed > 0 && Math.abs(typed - linesTotal) <= 0.5
+                return (
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '12px', alignItems: 'flex-end', justifyContent: 'flex-end', marginBottom: '12px' }}>
+                    <div>
+                      <label style={{ display: 'block', fontSize: '12px', fontWeight: '700', color: '#475569', marginBottom: '5px' }}>Total on the paper bill (before discount) *</label>
+                      <input type="number" min="0" placeholder="e.g. 66600" value={paperTotal} onChange={e => setPaperTotal(e.target.value)}
+                        style={{ padding: '10px', borderRadius: '6px', border: `1px solid ${typed > 0 && !matches ? '#dc2626' : '#cbd5e1'}`, fontSize: '14px', width: '170px', fontWeight: '700' }} />
+                    </div>
+                    <div style={{ fontSize: '13px', fontWeight: '700', paddingBottom: '10px', color: !typed ? '#475569' : matches ? '#16a34a' : '#dc2626' }}>
+                      Lines add up to Rs. {linesTotal.toLocaleString()}
+                      {typed > 0 && (matches ? ' ✓ matches the paper bill' : ` ✗ differs by Rs. ${Math.abs(typed - linesTotal).toLocaleString()}: check quantities and rates`)}
+                    </div>
+                  </div>
+                )
+              })()}
 
               <div style={{ textAlign: 'right', borderTop: '1px solid #e2e8f0', paddingTop: '15px' }}>
                 <button

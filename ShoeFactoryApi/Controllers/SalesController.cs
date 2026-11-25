@@ -55,6 +55,13 @@ namespace ShoeFactoryApi.Controllers
                 if (await _context.Sales.AnyAsync(s => s.CustomerId == sale.CustomerId && s.BillNo == sale.BillNo && s.Total == sale.Total && s.Date >= from && s.Date <= to))
                     return Conflict(new { message = $"Bill {sale.BillNo} for {sale.Customer} with this date and total is already saved. Check the bill list before saving it again." });
 
+                // The total written on the paper bill must match the lines, so a wrong quantity or rate is caught
+                // before saving (bill 45 was typed as 20 dozen instead of 30)
+                if (!payload.TryGetProperty("paperTotal", out var paperEl) || !decimal.TryParse(paperEl.ToString(), NumberStyles.Number, CultureInfo.InvariantCulture, out var paperTotal) || paperTotal <= 0)
+                    return BadRequest(new { message = "Enter the total written on the paper bill." });
+                if (Math.Abs(paperTotal - sale.RawTotal) > 0.5m)
+                    return BadRequest(new { message = $"The paper bill says Rs {paperTotal:N0}, but the lines add up to Rs {sale.RawTotal:N0}. Check each line's quantity and rate against the paper bill." });
+
                 // Every line must be an article size from Stock & Pricing, or its pairs never leave stock
                 if (await UnlinkedLine(sale) is { } unlinked) return BadRequest(new { message = unlinked });
 

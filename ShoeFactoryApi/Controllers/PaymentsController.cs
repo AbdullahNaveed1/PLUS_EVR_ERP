@@ -7,6 +7,11 @@ using ShoeFactoryApi.Services;
 
 namespace ShoeFactoryApi.Controllers
 {
+    public class PaymentDateInput
+    {
+        public DateOnly? Date { get; set; }
+    }
+
     [ApiController]
     [Route("api/[controller]")]
     [Authorize]
@@ -48,17 +53,17 @@ namespace ShoeFactoryApi.Controllers
             // This prevents int overflow errors that cause HTTP 400 responses.
             payment.Id = 0;
 
-            // Safety: PostgreSQL DateTime columns require UTC Kind
-            if (payment.Date.Kind != DateTimeKind.Utc)
-            {
-                payment.Date = DateTime.SpecifyKind(payment.Date, DateTimeKind.Utc);
-            }
+            // The day the cash was received, from the paper (cash is typed in days later)
+            if (payment.Date == default) return BadRequest(new { message = "Pick the date the payment was received." });
+            payment.Date = DateTime.SpecifyKind(payment.Date, DateTimeKind.Utc);
+            if (IsFuture(payment.Date)) return BadRequest(new { message = "The payment date can't be in the future." });
+            if (!(payment.Amount > 0)) return BadRequest(new { message = "Amount must be more than 0." });
 
             // A double-click or a retry sends the same payment again within seconds: keep only the first
-            var from = payment.Date.AddMinutes(-2);
-            var to = payment.Date.AddMinutes(2);
-            if (await _context.Payments.AnyAsync(p => p.CustomerId == payment.CustomerId && p.Amount == payment.Amount && p.Date >= from && p.Date <= to))
+            var recent = DateTime.UtcNow.AddMinutes(-2);
+            if (await _context.Payments.AnyAsync(p => p.CustomerId == payment.CustomerId && p.Amount == payment.Amount && p.CreatedAt >= recent))
                 return Conflict(new { message = $"Rs {payment.Amount:N0} from {payment.Customer} was already saved a moment ago." });
+            payment.CreatedAt = DateTime.UtcNow;
 
             _context.Payments.Add(payment);
             await _context.SaveChangesAsync();
@@ -66,7 +71,27 @@ namespace ShoeFactoryApi.Controllers
             return Ok(payment);
         }
 
-        // PUT: api/payments/5
+        // Admin only: puts a payment on the date it was really received. Closed months stay locked (both dates).
+        [Authorize(Roles = "Admin")]
+        [HttpPost("{id}/date")]
+        public async Task<IActionResult> ChangeDate(int id, [FromBody] PaymentDateInput input)
+        {
+            if (input?.Date == null) return BadRequest(new { message = "Pick the payment date." });
+            var payment = await _context.Payments.FindAsync(id);
+            if (payment == null) return NotFound();
+            var date = input.Date.Value.ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc);
+            if (IsFuture(date)) return BadRequest(new { message = "The payment date can't be in the future." });
+            payment.Date = date;
+            await _context.SaveChangesAsync();
+            return Ok(payment);
+        }
+
+        // Pakistan day of a date is after today
+        private static bool IsFuture(DateTime utc) =>
+            DateOnly.FromDateTime(utc.AddHours(5)) > DateOnly.FromDateTime(DateTime.UtcNow.AddHours(5));
+
+        // PUT: api/payments/5 — Admin only (no screen uses it; staff correct payments by cancelling them)
+        [Authorize(Roles = "Admin")]
         [HttpPut("{id}")]
         public async Task<IActionResult> UpdatePayment(int id, [FromBody] Payment payment)
         {

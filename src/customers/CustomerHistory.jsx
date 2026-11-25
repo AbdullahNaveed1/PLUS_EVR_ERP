@@ -33,11 +33,23 @@ const entryName = e => e.kind === 'bill'
   ? `Bill No ${e.billNo || '—'}`
   : e.kind === 'return' ? `Return (Bill No ${e.billNo || '—'})` : 'Cash received'
 
-export default function CustomerHistory({ customer, ledger, sales, onBack, canDeletePayments, onDeletePayment, onCancelPayment, canEditBills, onEditBill, canDeleteReturns, onDeleteReturn }) {
+export default function CustomerHistory({ customer, ledger, sales, onBack, canDeletePayments, onDeletePayment, onCancelPayment, onChangePaymentDate, canEditBills, onEditBill, canDeleteReturns, onDeleteReturn }) {
   const [openKey, setOpenKey] = useState(null)
   const [confirmPayment, setConfirmPayment] = useState(null)
   const [deleting, setDeleting] = useState(false)
   const [deleteError, setDeleteError] = useState('')
+  // Payment whose date is being changed: { id, date }
+  const [dateEdit, setDateEdit] = useState(null)
+
+  const saveDate = async () => {
+    if (!dateEdit?.date) return
+    try {
+      await onChangePaymentDate(dateEdit.id, dateEdit.date)
+      setDateEdit(null)
+    } catch (err) {
+      window.alert(err.message)
+    }
+  }
 
   const closeConfirm = () => { if (!deleting) { setConfirmPayment(null); setDeleteError('') } }
 
@@ -130,6 +142,16 @@ export default function CustomerHistory({ customer, ledger, sales, onBack, canDe
           {e.kind === 'bill' && canEditBills && sale && (
             <button type="button" className="em-btn em-btn-ghost em-btn-sm" onClick={() => onEditBill(sale)}>✏️ Edit bill</button>
           )}
+          {e.kind === 'payment' && onChangePaymentDate && (dateEdit?.id === e.sortId ? (
+            <span className="em-row-actions">
+              <input type="date" value={dateEdit.date} max={new Date().toLocaleDateString('en-CA')} aria-label="Date received"
+                onChange={ev => setDateEdit({ id: e.sortId, date: ev.target.value })} />
+              <button type="button" className="em-btn em-btn-primary em-btn-sm" onClick={saveDate}>Save date</button>
+              <button type="button" className="em-btn em-btn-ghost em-btn-sm" onClick={() => setDateEdit(null)}>Cancel</button>
+            </span>
+          ) : (
+            <button type="button" className="em-btn em-btn-ghost em-btn-sm" onClick={() => setDateEdit({ id: e.sortId, date: e.date })}>📅 Change date</button>
+          ))}
           {e.kind === 'payment' && onCancelPayment && (
             <button type="button" className="em-btn em-btn-ghost em-btn-sm" onClick={() => onCancelPayment(e)}>Cancel payment</button>
           )}
