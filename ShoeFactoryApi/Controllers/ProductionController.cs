@@ -93,6 +93,21 @@ namespace ShoeFactoryApi.Controllers
             input.Date = DateTime.SpecifyKind(input.Date.Date, DateTimeKind.Utc);
 
             var sizes = CleanSizes(input.Sizes);
+            // Production must go into finished stock, so it is split by size; an article with one size gets it automatically
+            if (sizes.Count == 0)
+            {
+                var variants = await ArticleVariants(input.ArticleNumber);
+                if (variants.Count == 0)
+                    return BadRequest(new { message = $"Article {input.ArticleNumber?.Trim()} is not in Stock & Pricing yet. Add it there with its sizes first, so this production goes into stock." });
+                if (variants.Count > 1)
+                    return BadRequest(new { message = $"Split the production of article {input.ArticleNumber?.Trim()} by size (📏 Add sizes) so it goes into stock." });
+                var only = variants[0];
+                sizes = new List<ProductionSize>
+                {
+                    new() { ProductId = only.Id, Size = only.Size, Color = string.IsNullOrWhiteSpace(only.Color) ? null : only.Color, Dozens = input.Dozens, Pairs = input.Pairs }
+                };
+            }
+            if (await UnknownProduct(sizes) is { } missing) return BadRequest(new { message = missing });
             ApplySizes(input, sizes);
             await MoveStock(new List<ProductionSize>(), sizes);
 
@@ -119,6 +134,7 @@ namespace ShoeFactoryApi.Controllers
             var before = ReadSizes(existing.SizesJson);
             // Sizes left out of the request keep what was saved
             var after = input.Sizes == null ? before : CleanSizes(input.Sizes);
+            if (await UnknownProduct(after) is { } missing) return BadRequest(new { message = missing });
             existing.Dozens = input.Dozens;
             existing.Pairs = input.Pairs;
             ApplySizes(existing, after);
@@ -159,6 +175,26 @@ namespace ShoeFactoryApi.Controllers
             _db.ProductionRecords.Remove(existing);
             await _db.SaveChangesAsync();
             return NoContent();
+        }
+
+        // The article's sizes in Stock & Pricing (matched like the app groups them: article no., or model when it has none)
+        private async Task<List<Product>> ArticleVariants(string? article)
+        {
+            var key = (article ?? string.Empty).Trim().ToLower();
+            if (key.Length == 0) return new List<Product>();
+            return await _db.Products.AsNoTracking()
+                .Where(p => p.ArticleNumber.Trim().ToLower() == key || (p.ArticleNumber.Trim() == "" && p.Model.Trim().ToLower() == key))
+                .OrderBy(p => p.Id)
+                .ToListAsync();
+        }
+
+        // A size row pointing at a product that no longer exists would silently skip stock
+        private async Task<string?> UnknownProduct(List<ProductionSize> sizes)
+        {
+            var ids = sizes.Where(s => s.ProductId.HasValue).Select(s => s.ProductId!.Value).Distinct().ToList();
+            if (sizes.Any(s => !s.ProductId.HasValue)) return "Choose a size from Stock & Pricing for every row.";
+            var found = await _db.Products.CountAsync(p => ids.Contains(p.Id));
+            return found == ids.Count ? null : "One of the sizes is no longer in Stock & Pricing. Pick the sizes again.";
         }
 
         private static List<ProductionSize> ReadSizes(string? json)

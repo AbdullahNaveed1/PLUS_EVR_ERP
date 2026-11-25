@@ -1658,6 +1658,16 @@ export default function App() {
     e.preventDefault()
     if (!newProduction.articleNumber) return
     const variants = inventoryByArticle[newProduction.articleNumber.trim()] || []
+    // Production goes into finished stock by size; one-size articles are filled in by the server
+    if (!productionSizes && variants.length === 0) {
+      alert(`Article ${newProduction.articleNumber.trim()} is not in Stock & Pricing yet. Add it there with its sizes first, so this production goes into stock.`)
+      return
+    }
+    if (!productionSizes && variants.length > 1) {
+      alert('Split this production by size so it goes into stock: fill in the sizes below.')
+      setProductionSizes([emptySize()])
+      return
+    }
     const sizes = productionSizes ? toSizePayload(productionSizes, variants) : []
     if (productionSizes && productionSizes.some(r => !r.productId && (Number(r.dozens) > 0 || Number(r.pairs) > 0))) {
       alert('Choose a size for every row that has a quantity.')
@@ -1687,10 +1697,10 @@ export default function App() {
       })
       setProductionSizes(null)
       // The server added the made pairs to finished stock
-      if (sizes.length > 0) fetchAllData()
+      fetchAllData()
     } catch (err) {
       console.error('Add production failed:', err)
-      alert('Failed to save production record.')
+      alert(err.response?.data?.message || 'Failed to save production record.')
     }
   }
 
@@ -1705,6 +1715,13 @@ export default function App() {
       pairs: inputs.pairs !== undefined ? Number(inputs.pairs) || 0 : existing.pairs,
       notes: inputs.notes !== undefined ? inputs.notes : existing.notes
     }
+    // Sizes added to an old entry saved without them: its pairs go into finished stock now
+    if (inputs.sizes) {
+      if (inputs.sizes.some(r => !r.productId && (Number(r.dozens) > 0 || Number(r.pairs) > 0))) { alert('Choose a size for every row that has a quantity.'); return }
+      const variants = inventoryByArticle[String(payload.articleNumber || '').trim()] || []
+      payload.sizes = toSizePayload(inputs.sizes, variants)
+      if (payload.sizes.length === 0) { alert('Enter dozens or pairs for at least one size.'); return }
+    }
     try {
       const res = await axios.put(`${API_BASE_URL}/api/production/${id}`, payload, { headers: authHeaders() })
       setProductionRecords(prev => prev.map(p => p.id === id ? {
@@ -1713,9 +1730,10 @@ export default function App() {
       } : p))
       setEditingProductionId(null)
       setEditProductionInputs(prev => ({ ...prev, [id]: {} }))
+      if (payload.sizes) fetchAllData()
     } catch (err) {
       console.error('Update production failed:', err)
-      alert('Failed to update production record.')
+      alert(err.response?.data?.message || 'Failed to update production record.')
     }
   }
 
@@ -2989,6 +3007,23 @@ export default function App() {
                             {(p.sizes || []).length > 0 && (
                               <div style={{ fontSize: '12px', fontWeight: '500', color: '#64748b', marginTop: '4px' }}>📏 {describeSizes(p.sizes)}</div>
                             )}
+                            {!(p.sizes || []).length && !isEditing && (
+                              <div style={{ fontSize: '12px', fontWeight: '600', color: '#b45309', marginTop: '4px' }}>⚠ No sizes: not in stock. Edit to add sizes.</div>
+                            )}
+                            {isEditing && !(p.sizes || []).length && (inputs.sizes ? (
+                              <div style={{ marginTop: '6px', minWidth: '320px' }}>
+                                <ProductionSizes
+                                  variants={inventoryByArticle[String(inputs.articleNumber ?? p.articleNumber).trim()] || []}
+                                  rows={inputs.sizes}
+                                  onChange={rows => setEditProductionInputs(prev => ({ ...prev, [p.id]: { ...(prev[p.id] || {}), sizes: rows } }))}
+                                />
+                              </div>
+                            ) : (
+                              <button type="button" onClick={() => setEditProductionInputs(prev => ({ ...prev, [p.id]: { ...(prev[p.id] || {}), sizes: [emptySize()] } }))}
+                                style={{ marginTop: '6px', backgroundColor: '#f1f5f9', color: '#475569', border: '1px dashed #cbd5e1', borderRadius: '6px', padding: '6px 10px', cursor: 'pointer', fontSize: '12px', fontWeight: '600' }}>
+                                📏 Add sizes (puts it in stock)
+                              </button>
+                            ))}
                           </td>
                           <td style={{ padding: '14px', fontWeight: '700', color: '#2563eb' }}>
                             {isEditing && !(p.sizes || []).length ? (
